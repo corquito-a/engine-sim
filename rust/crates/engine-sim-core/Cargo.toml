@@ -1,0 +1,18 @@
+[package]
+name = "engine-sim-core"
+description = "Native Rust port of the Engine Simulator simulation core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "engine_sim_core"
+path = "src/lib.rs"
+
+# Deliberately dependency-free: the core is pure scalar math and must stay
+# buildable offline and verifiable bit-for-bit against the C++ original.
+[dependencies]
+
+[[example]]
+name = "gas_trace"
+path = "examples/gas_trace.rs"

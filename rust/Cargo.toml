@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = ["crates/engine-sim-core"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/Engine-Simulator/engine-sim"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+# Do not enable fast-math style transformations anywhere in this workspace: the
+# audio and gas-dynamics code is tuned around the exact C++ operation order.
