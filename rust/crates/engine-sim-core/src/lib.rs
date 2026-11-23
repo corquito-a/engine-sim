@@ -35,6 +35,7 @@
 pub mod chamber;
 pub mod constants;
 pub mod drivetrain;
+pub mod dsp;
 pub mod engine;
 pub mod fuel;
 pub mod function;
@@ -43,6 +44,7 @@ pub mod ignition;
 pub mod parts;
 pub mod scs;
 pub mod simulator;
+pub mod synth;
 pub mod units;
 pub mod utilities;
 

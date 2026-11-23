@@ -25,16 +25,19 @@ Motivation and estimates: [`docs/rust-port-assessment.md`](../docs/rust-port-ass
 | `engine` (graph wiring, throttle/governor, VTEC conditions) | `include/engine.h`, `src/engine.cpp` | ✅ done | bit-exact (whole-core) |
 | `simulator` (`PistonEngineSimulator` step loop, audio tap) | `src/piston_engine_simulator.cpp` | ✅ core | bit-exact (whole-core) |
 | `atg_scs` subset (rigid bodies, constraints, NSV solver, Gauss-Seidel) | `submodules/simple-2d-constraint-solver` | ✅ done | bit-exact (whole-core) |
-| DSP / synthesizer | `src/synthesizer.cpp`, filters | ⬜ next | — |
+| `dsp` (low pass, Butterworth f32/f64, derivative, delay, convolution, leveling, jitter, `<random>` compat) | `src/*_filter.cpp`, `delta-studio`'s `convolve.h` | ✅ done | bit-exact (filter harness) |
+| `synth` (input resampling, impulse response, render/mix, int16 out) | `src/synthesizer.cpp` | ✅ done | bit-exact (filter harness + whole-core incl. audio) |
 | script interpreter (`.mr`) | `scripting/`, `submodules/piranha` | ⬜ | — |
 | app shell (window/render/UI/audio out) | `delta-studio` | ⬜ | — |
 
-**Verification result: the whole simulation core is bit-exact.** Running the
-same single-cylinder engine (the `01_honda_trx520.mr` fixture) through the
-original C++ and through the Rust port for **200 000 physics steps (20 s of
-simulated time, 0.5 s per step)** produces **5 000 000 identical `f64` bit
-patterns** — crank/piston/rod kinematics, chamber pressure/temperature/moles
-and mixture, intake/runner/exhaust pressures, and dyno torque, at every step.
+**Verification result: the whole simulation core and the audio path are
+bit-exact.** Running the same single-cylinder engine (the `01_honda_trx520.mr`
+fixture) through the original C++ and through the Rust port for **200 000
+physics steps (20 s of simulated time, 0.5 s per step)** produces **8 964 002
+identical `f64` bit patterns** — crank/piston/rod kinematics, chamber
+pressure/temperature/moles and mixture, intake/runner/exhaust pressures, dyno
+torque, the synthesizer's resampled input, and every rendered `int16` audio
+sample, at every step.
 
 That run covers the parts that are easy to get *almost* right: ignition
 timing, flame-front propagation and burn efficiency (including the fuel's
@@ -95,9 +98,9 @@ present.
 ```bash
 cd rust
 cargo build --all-targets     # no warnings
-cargo test                    # 5 unit + 13 gas + 4 end-to-end = 22 tests
+cargo test                    # 16 unit + 13 gas + 4 end-to-end = 33 tests
 cargo test --release
-./tools/parity/run_core_parity.sh 200000   # 5 000 000 bit-identical checkpoints
+./tools/parity/run_core_parity.sh 200000   # 8 964 002 bit-identical checkpoints
 ```
 
 `crates/engine-sim-core/fixtures/trx520.rs` is the shared fixture: it rebuilds
@@ -114,6 +117,7 @@ scenario as a Rust binary, and diff raw `f64` bit patterns:
 ./tools/parity/run_parity.sh                  # gas system only, 185 checkpoints
 ./tools/parity/run_core_parity.sh 200000      # whole core, 24 fields per step
 PARITY_DYNO=1 ./tools/parity/run_core_parity.sh 20000   # same, dyno hold engaged
+./tools/parity/run_dsp_parity.sh              # every audio filter + the synthesizer
 
 ./tools/parity/stage_reference.sh             # first run only: builds /tmp/refcore
 ```
@@ -155,14 +159,27 @@ changes):
   so the reference build passes `-fpermissive -D__forceinline=inline
   -include cmath -include cstdlib -include cstring`.
 
+`run_dsp_parity.sh` is the same idea one level down: it drives every filter of
+the audio chain (and then a whole `Synthesizer`) with an identical,
+libm-independent input on both sides and compares the raw `f64` bits of every
+output. It exists because a 1-ulp coefficient difference is invisible at the
+engine level — it only shows up as a handful of `int16` samples that are off by
+one, thousands of samples into a run.
+
 ### Making combustion reproducible
 
 `CombustionChamber::ignite` draws one `rand()` per ignition event, so the
 original is not reproducible across C libraries. For parity both sides use the
 same 31-bit LCG (`fuel::Rng` in Rust, `tools/parity/parity_rand.{h,cpp}` on the
-C++ side): the reference build recompiles **only** `combustion_chamber.cpp`
+C++ side): the reference build recompiles each `rand()`-using translation unit
 with `-include parity_rand.h`, which force-defines `rand()` after `<cstdlib>`
-(libstdc++ `#undef`s it) and links that object ahead of `librefcore.a`.
+(libstdc++ `#undef`s it) and links those objects ahead of `librefcore.a`.
+
+There are two such units: `combustion_chamber.cpp` (ignition efficiency) and
+`synthesizer.cpp` (`Synthesizer::renderAudio` draws two values per sample for
+the jitter term). Both harnesses recompile both. Missing the synthesizer one is
+subtle: the engine trace stays bit-exact and only the audio differs, because the
+`int16` output saturates the difference into a handful of 1-LSB samples.
 
 ## Findings worth knowing (found while porting)
 
@@ -186,7 +203,23 @@ with `-include parity_rand.h`, which force-defines `rand()` after `<cstdlib>`
   pressure). Those tests look like they predate a sign-convention change and
   are not run by CI (the workflow only builds).
 
-### Four bugs the parity harness caught (all in ported code, now fixed)
+### Two DSP bugs the harness caught
+
+1. **Butterworth coefficients were 1 ulp off.** `setCutoffFrequency` mixes
+   precisions: `f`, `f_2`..`f_4`, `(m + n) * f` and `m * n` are all *float*
+   arithmetic, while the `2.0` literals promote `(2.0 + m * n)` and the whole
+   polynomial sum to `double`. Doing the `m * n` product in double (the obvious
+   reading of "it is mixed precision, so use the wider type") changes several
+   coefficients in the last bit at 10 kHz — the air-noise cutoff. Everything
+   still sounds fine; the noise floor just moves by an ulp and a few audio
+   samples end up 1 LSB apart.
+2. **`std::tan` is not portable across time.** Rust constant-folds `f32::tan`
+   when LLVM can see a constant cutoff, and the folded value differs from the
+   `tanf` the reference calls at run time. The unit test that pins the
+   coefficients therefore passes its cutoff through `std::hint::black_box` to
+   force the same runtime call the C++ makes.
+
+### Four core bugs the parity harness caught (all in ported code, now fixed)
 
 Each of these produced plausible-looking but wrong engine output — audio would
 have been subtly (or grossly) wrong with no test noticing:
@@ -220,14 +253,35 @@ reference behaviour, not a port bug: `PARITY_DYNO=1` reproduces it
 bit-for-bit. The end-to-end combustion test therefore runs the free-revving
 starter configuration, where the first charge lights at ~0.9 s.
 
+## The audio path
+
+The engine's "sound" is a single `f64` per exhaust per frame
+(`Simulator::writeToSynthesizer`), resampled from 10 kHz to 44.1 kHz and run
+through a fixed chain: jitter (with its own `std::default_random_engine` and two
+`rand()` draws per sample in `renderAudio`), a DC-blocking low pass, a
+derivative/level mix, a 512-tap convolution with a synthesised impulse response,
+a 4th-order Butterworth, a leveling filter, and an `int16` round-and-clamp.
+The port reproduces all of it operation for operation, including:
+
+* `RingBuffer`'s latent bugs (`overwrite`'s undeclared `start`, the
+  single-capacity subtraction in `removeBeginning`/`readAndRemove`);
+* `ButterworthLowPassFilter`'s 4-slot shift register — it is *not* a biquad, and
+  writing it as one changes the output;
+* `JitterFilter`'s history layout, `floor`/`ceil` interpolation and clamping,
+  and libstdc++'s `generate_canonical<float, 24>` for
+  `uniform_real_distribution<float>`;
+* the reference's own instability: at 100 Hz / 44.1 kHz the direct-form f32
+  Butterworth overflows to infinity after ~29 000 samples. The synth only uses
+  1900 Hz, 10 kHz and 0.45·fs, all stable; the divergence is pinned as a
+  characterisation test rather than "fixed".
+
+Rendering is driven explicitly (`Simulator::render_audio_block`) instead of on
+the reference's audio thread, so PCM output is reproducible.
+
 ## Next steps
 
-1. **DSP / synthesizer** (`src/synthesizer.cpp`, `src/simple_filter.h`,
-   `src/low_pass_filter.cpp`, `delta-studio`'s convolution): the port needs the
-   same recorded PCM oracle the gas system used. `Simulator::write_to_synthesizer`
-   already produces the per-exhaust flow signal, so the input side is ready.
-2. **Script interpreter** for `.mr` (`scripting/`, `piranha`): with the core
+1. **Script interpreter** for `.mr` (`scripting/`, `piranha`): with the core
    bit-exact, `assets/` becomes a regression corpus — load each engine, run N
    frames, compare traces.
-3. **App shell** (window, render, UI, audio output) last; it is where the port
+2. **App shell** (window, render, UI, audio output) last; it is where the port
    can finally diverge from the C++ without losing fidelity.

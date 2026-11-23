@@ -30,14 +30,31 @@ fn assert_all_finite(sim: &Simulator) {
     }
 }
 
+/// The application installs a recorded impulse response before rendering; a
+/// unit impulse makes the convolution stage a pass-through, which is enough for
+/// a smoke test.
+fn install_unit_impulse_response(sim: &mut Simulator) {
+    sim.synthesizer
+        .initialize_impulse_response(&[i16::MAX], 1.0, 0);
+}
+
 /// Advances the simulation by exactly one physics step, wrapped in a frame the
 /// way the reference application drives it. A sub-half-timestep frame `dt`
 /// makes `simulateStep()` run a single step.
+///
+/// Audio is rendered and drained every frame, as the application does. This is
+/// not optional: `startFrame` sizes the frame from the synthesizer's queue
+/// depth (`getLatency()`), so a loop that produces audio but never plays it
+/// backs the queue up and shrinks the frame to zero steps.
 fn step_one_frame(sim: &mut Simulator) {
     let timestep = sim.get_timestep();
     sim.start_frame(timestep * 0.1);
     while sim.simulate_step() {}
     sim.end_frame();
+
+    sim.render_audio_block();
+    let mut audio = [0i16; 4096];
+    sim.read_audio_output(&mut audio);
 }
 
 #[test]
@@ -72,6 +89,7 @@ fn combustion_raises_cylinder_pressure_above_atmospheric() {
     // `PARITY_DYNO=1`), so the free-revving starter configuration is the one
     // that actually reaches combustion.
     sim.set_starter_enabled(true);
+    install_unit_impulse_response(&mut sim);
 
     // The intake has to fill the runner before the first charge reaches the
     // cylinder: in the reference implementation the first combustion event

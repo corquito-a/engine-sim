@@ -215,20 +215,29 @@ Milestone **M1 (headless simulation core) is complete and verified
 bit-exact**. See [`rust/README.md`](../rust/README.md) for the module table,
 commands and findings.
 
-* `rust/` — dependency-free workspace with `engine-sim-core` (~7 000 lines,
+* `rust/` — dependency-free workspace with `engine-sim-core` (~9 000 lines,
   no external crates): `constants`, `units`, `utilities`, `gas`, `function`,
   `parts` (crank, banks, heads, valvetrain, camshaft, pistons, rods, intake,
   exhaust), `fuel`, `chamber`, `drivetrain`, `ignition`, `engine`, `simulator`,
-  and the used subset of `atg_scs` (rigid bodies, link/line/gear/torque
+  `dsp` (low pass, Butterworth f32/f64, derivative, delay, convolution,
+  leveling, jitter, `<random>` compatibility) and `synth`
+  (`Synthesizer`: resampling, impulse response, mixing, `int16` output),
+  plus the used subset of `atg_scs` (rigid bodies, link/line/gear/torque
   constraints, NSV ODE solver, Gauss-Seidel SLE solver).
 * `rust/tools/parity/run_core_parity.sh` builds the repo's own C++ core against
   the same single-cylinder TRX520 fixture and diffs `f64` bit patterns for 24
-  quantities per step: **200 000 steps (20 s of engine time) → 5 000 000
+  physics quantities *plus* the synthesizer input and every rendered audio
+  sample per step: **200 000 steps (20 s of engine time) → 8 964 002
   checkpoints, all identical**, including ignition, flame propagation, gas
-  exchange and the solver. `PARITY_DYNO=1` covers the dynamometer-hold path.
+  exchange, the solver and the full audio chain. `PARITY_DYNO=1` covers the
+  dynamometer-hold path.
+* `rust/tools/parity/run_dsp_parity.sh` drives each audio filter and a whole
+  `Synthesizer` with identical inputs on both sides and compares every output
+  bit — this is what localises a 1-ulp coefficient difference that the engine
+  trace only shows as an occasional 1-LSB audio sample.
 * `rust/tools/parity/run_parity.sh` keeps the earlier gas-system check (185
   checkpoints, also identical).
-* 22 Rust tests (5 unit + 13 gas-system integration + 4 end-to-end).
+* 33 Rust tests (16 unit + 13 gas-system integration + 4 end-to-end).
 
 Findings that changed the plan:
 
@@ -245,9 +254,10 @@ Findings that changed the plan:
   wrap are all load-bearing; three of them were wrong in the port and only the
   bit-exact harness caught them (§4, risk 1: "transliterate, never rewrite").
 
-Remaining work is the parts that sit *around* the core: the DSP/synthesizer
-chain, the `.mr` script interpreter, and the app shell. With the core proven,
-the risk there is ordinary porting effort rather than model fidelity.
+Remaining work is the parts that sit *around* the core: the `.mr` script
+interpreter and the app shell (window, render, audio device). With the physics
+and the audio chain both proven bit-exact, the risk there is ordinary porting
+effort rather than model fidelity.
 
-Revised confidence: **headless core delivered**; end-to-end application parity
-~75 % (dominated by DSP + scripting + platform layer).
+Revised confidence: **headless core + audio chain delivered**; end-to-end
+application parity ~85 % (dominated by scripting + platform layer).
