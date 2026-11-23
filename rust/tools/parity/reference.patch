@@ -1,0 +1,113 @@
+diff -ruN a/include/delta.h b/include/delta.h
+--- a/include/delta.h	2026-11-23 13:45:26.419886249 +0000
++++ b/include/delta.h	2026-11-23 13:45:26.427886391 +0000
+@@ -1,7 +1 @@
+-#ifndef DELTA_TEMPLATE_DELTA_INCLUDES_H
+-#define DELTA_TEMPLATE_DELTA_INCLUDES_H
+-
+-#include <delta-studio/include/yds_core.h>
+-#include <delta-studio/engines/basic/include/delta_basic_engine.h>
+-
+-#endif /* DELTA_TEMPLATE_DELTA_INCLUDES_H */
++// shim: delta-studio is not needed by the headless core
+diff -ruN a/include/gas_system.h b/include/gas_system.h
+--- a/include/gas_system.h	2026-11-23 13:45:26.423886320 +0000
++++ b/include/gas_system.h	2026-11-23 13:45:26.427886391 +0000
+@@ -13,6 +13,7 @@
+             double p_fuel = 0.0;
+             double p_inert = 1.0;
+             double p_o2 = 0.0;
++            Mix();
+         };
+ 
+         struct State {
+@@ -37,8 +38,8 @@
+         ~GasSystem() { /* void */ }
+ 
+         void setGeometry(double width, double height, double dx, double dy);
+-        void initialize(double P, double V, double T, const Mix &mix = {}, int degreesOfFreedom = 5);
+-        void reset(double P, double T, const Mix &mix = {});
++        void initialize(double P, double V, double T, const Mix &mix = Mix(), int degreesOfFreedom = 5);
++        void reset(double P, double T, const Mix &mix = Mix());
+ 
+         void setVolume(double V);
+         void setN(double n);
+@@ -48,10 +49,10 @@
+         void changeTemperature(double dT);
+         void changeTemperature(double dT, double n);
+         void changeEnergy(double dE);
+-        void changeMix(const Mix &mix);
++        void changeMix(const Mix &mix = Mix());
+         void injectFuel(double n);
+ 
+-        double react(double n, const Mix &mix);
++        double react(double n, const Mix &mix = Mix());
+         static double flowConstant(double flowRate, double P, double pressureDrop, double T, double hcr);
+         static double k_28inH2O(double flowRateScfm);
+         static double k_carb(double flowRateScfm);
+@@ -65,14 +66,14 @@
+             double chokedFlowLimit,
+             double chokedFlowRateCached);
+         double loseN(double dn, double E_k_per_mol);
+-        double gainN(double dn, double E_k_per_mol, const Mix &mix = {});
++        double gainN(double dn, double E_k_per_mol, const Mix &mix = Mix());
+         void dissipateExcessVelocity();
+ 
+         void updateVelocity(double dt, double beta = 1.0);
+         void dissipateVelocity(double dt, double timeConstant);
+ 
+         static double flow(const FlowParameters &params);
+-        double flow(double k_flow, double dt, double P_env, double T_env, const Mix &mix = {});
++        double flow(double k_flow, double dt, double P_env, double T_env, const Mix &mix = Mix());
+ 
+         double pressureEquilibriumMaxFlow(const GasSystem *b) const;
+         double pressureEquilibriumMaxFlow(double P_env, double T_env) const;
+@@ -282,4 +283,6 @@
+     return heatCapacityRatio(m_degreesOfFreedom);
+ }
+ 
++inline GasSystem::Mix::Mix() = default;
++
+ #endif /* ATG_ENGINE_SIM_GAS_SYSTEM_H */
+diff -ruN a/src/connecting_rod.cpp b/src/connecting_rod.cpp
+--- a/src/connecting_rod.cpp	2026-11-23 13:45:26.423886320 +0000
++++ b/src/connecting_rod.cpp	2026-11-23 13:45:26.427886391 +0000
+@@ -1,4 +1,4 @@
+-#include "..\include\connecting_rod.h"
++#include "../include/connecting_rod.h"
+ #include "../include/connecting_rod.h"
+ 
+ #include <cmath>
+diff -ruN a/src/engine.cpp b/src/engine.cpp
+--- a/src/engine.cpp	2026-11-23 13:45:26.423886320 +0000
++++ b/src/engine.cpp	2026-11-23 13:45:26.427886391 +0000
+@@ -1,4 +1,4 @@
+-#include "..\include\engine.h"
++#include "../include/engine.h"
+ #include "../include/engine.h"
+ 
+ #include "../include/constants.h"
+diff -ruN a/src/piston_engine_simulator.cpp b/src/piston_engine_simulator.cpp
+--- a/src/piston_engine_simulator.cpp	2026-11-23 13:45:26.423886320 +0000
++++ b/src/piston_engine_simulator.cpp	2026-11-23 13:45:26.427886391 +0000
+@@ -33,7 +33,7 @@
+     assert(m_crankshaftFrictionConstraints == nullptr);
+     assert(m_exhaustFlowStagingBuffer == nullptr);
+     assert(m_delayFilters == nullptr);
+-    assert(m_antialiasingFilters == nullptr);
++    // shim: member does not exist upstream
+ }
+ 
+ void PistonEngineSimulator::loadSimulation(Engine *engine, Vehicle *vehicle, Transmission *transmission) {
+diff -ruN a/src/synthesizer.cpp b/src/synthesizer.cpp
+--- a/src/synthesizer.cpp	2026-11-23 13:45:26.423886320 +0000
++++ b/src/synthesizer.cpp	2026-11-23 13:45:26.427886391 +0000
+@@ -304,7 +304,7 @@
+         float v_in =
+             f_p * dF_F_mix
+             + f * r_mixed * (1 - dF_F_mix);
+-        if (fpclassify(v_in) == FP_SUBNORMAL) {
++        if (std::fpclassify(v_in) == FP_SUBNORMAL) {
+             v_in = 0;
+         }
+ 
