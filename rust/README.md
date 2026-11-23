@@ -280,8 +280,28 @@ the reference's audio thread, so PCM output is reproducible.
 
 ## Next steps
 
-1. **Script interpreter** for `.mr` (`scripting/`, `piranha`): with the core
-   bit-exact, `assets/` becomes a regression corpus — load each engine, run N
-   frames, compare traces.
+1. **Script interpreter** for `.mr` (`scripting/`, `piranha`). Scope, measured
+   from the sources rather than guessed:
+
+   * `piranha` (now checked out: `git submodule update --init
+     dependencies/submodules/piranha`) is ~5 500 lines of C++ behind a
+     flex/bison front end (`flex-bison/scanner.l`, 170 lines;
+     `flex-bison/specification.y`, 525 lines). The language is *declarative*:
+     `import`, `node`/`inline` definitions, `public`/`private`, `input`/
+     `output`/`modify`/`toggle` ports, `alias`, `label`, node instantiation and
+     arithmetic expressions. No loops, no conditionals — so a recursive-descent
+     parser that mirrors the grammar's precedence declarations is enough.
+   * `scripting/` is the engine-sim binding layer (~580 lines plus ~30 node
+     headers) and is plain C++: only the parser needs bison.
+   * **Neither `flex` nor `bison` is available in this sandbox** (no `m4`
+     either, and the distro mirrors are unreachable), so the C++ *parser*
+     cannot be rebuilt for an oracle. The interpreter's oracle is therefore the
+     already-verified `fixtures/trx520.rs`: running `01_honda_trx520.mr`
+     through the port must reproduce every parameter the bit-exact core
+     fixture uses. Engines the fixture does not cover get structural checks
+     plus hand-verified arithmetic.
+   * Milestones: scanner → parser → IR structures → compilation unit → node
+     graph → `scripting/` node types → `EngineContext` → compare with the
+     fixture.
 2. **App shell** (window, render, UI, audio output) last; it is where the port
    can finally diverge from the C++ without losing fidelity.
