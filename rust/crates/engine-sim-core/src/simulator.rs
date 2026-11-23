@@ -1,10 +1,11 @@
 //! Port of `include/simulator.h`, `src/simulator.cpp`,
 //! `include/piston_engine_simulator.h` and `src/piston_engine_simulator.cpp`.
 //!
-//! The audio path (`Synthesizer`, `writeToSynthesizer`) is not wired in yet;
-//! `write_to_synthesizer` collects the per-exhaust-system flow values that the
-//! original feeds to the synthesizer, so the DSP stage can be attached without
-//! touching the physics.
+//! The audio path is wired in: `write_to_synthesizer` builds the per-exhaust
+//! flow signal (including the pipe-length delay), and `synthesizer` turns it
+//! into 44.1 kHz `int16` audio. The rendering "thread" of the original is
+//! replaced by an explicit [`Simulator::render_audio_block`] call, which makes
+//! the audio output reproducible sample-for-sample.
 
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -14,7 +15,9 @@ use crate::drivetrain::{
     Dynamometer, StarterMotor, Transmission, Vehicle, VehicleDragConstraint,
 };
 use crate::engine::Engine;
+use crate::dsp::DelayFilter;
 use crate::fuel::Rng;
+use crate::synth::{AudioParameters, Synthesizer, SynthesizerParameters};
 use crate::scs::{
     ClutchConstraint, Constraint, FixedPositionConstraint, ForceGenerator, LineConstraint,
     LinkConstraint, RigidBody, RigidBodySystem, RotationFrictionConstraint,
@@ -45,8 +48,11 @@ pub struct Simulator {
     pub physics_processing_time: f64,
     pub simulation_start: Instant,
 
-    /// Estimated input latency of the (not yet ported) synthesizer.
-    pub synthesizer_latency: f64,
+    /// `Simulator::m_synthesizer`
+    pub synthesizer: Synthesizer,
+    /// `PistonEngineSimulator::m_delayFilters` — one per cylinder, delaying the
+    /// exhaust pulse by the header-primary + pipe length.
+    pub delay_filters: Vec<DelayFilter>,
 
     // constraint handles (indices into `solver.constraints`)
     pub crank_constraints: Vec<usize>,
@@ -84,7 +90,8 @@ impl Simulator {
             last_dyno_torque_sample: 0,
             physics_processing_time: 0.0,
             simulation_start: Instant::now(),
-            synthesizer_latency: 0.0,
+            synthesizer: Synthesizer::new(),
+            delay_filters: Vec::new(),
             crank_constraints: Vec::new(),
             cylinder_wall_constraints: Vec::new(),
             link_constraints: Vec::new(),
@@ -330,6 +337,41 @@ impl Simulator {
         self.engine.ignition.reset(cycle_angle);
 
         self.exhaust_flow_staging_buffer = vec![0.0; self.engine.get_exhaust_system_count()];
+
+        // `PistonEngineSimulator::placeAndInitialize`: one delay filter per
+        // cylinder, from the header-primary + exhaust pipe length.
+        self.delay_filters = Vec::with_capacity(cylinder_count);
+        for i in 0..cylinder_count {
+            let piston = &self.engine.pistons[i];
+            let bank = piston.bank.clone();
+            let head = self.engine.heads[bank.index().max(0) as usize].clone();
+            let cylinder_index = piston.cylinder_index.max(0) as usize;
+
+            let exhaust_index = head.exhaust_system(cylinder_index).expect("exhaust system");
+            let exhaust_length =
+                head.header_primary_length(cylinder_index) + self.engine.exhausts[exhaust_index].length;
+
+            let delay = exhaust_length / crate::synth::SPEED_OF_SOUND;
+            let mut filter = DelayFilter::new();
+            filter.initialize(delay, 10000.0);
+            self.delay_filters.push(filter);
+        }
+
+        self.initialize_synthesizer();
+    }
+
+    /// `Simulator::initializeSynthesizer`
+    pub fn initialize_synthesizer(&mut self) {
+        let params = SynthesizerParameters {
+            input_channel_count: self.engine.get_exhaust_system_count(),
+            input_buffer_size: 44100,
+            audio_buffer_size: 44100,
+            input_sample_rate: self.simulation_frequency as f32,
+            audio_sample_rate: 44100.0,
+            initial_audio_parameters: AudioParameters::default(),
+        };
+
+        self.synthesizer.initialize(&params);
     }
 
     /// `PistonEngineSimulator::placeCylinder`
@@ -405,13 +447,17 @@ impl Simulator {
         self.simulation_start = Instant::now();
         self.current_iteration = 0;
 
+        self.synthesizer
+            .set_input_sample_rate(self.simulation_frequency * self.simulation_speed);
+
         let timestep = self.get_timestep();
         self.steps = ((dt * self.simulation_speed) / timestep).round() as usize;
 
         let target_latency = self.target_synthesizer_latency;
-        if self.synthesizer_latency < target_latency {
+        let synthesizer_latency = self.synthesizer.get_latency();
+        if synthesizer_latency < target_latency {
             self.steps = ((self.steps + 1) as f64 * 1.1) as usize;
-        } else if self.synthesizer_latency > target_latency {
+        } else if synthesizer_latency > target_latency {
             let adjusted = ((self.steps as f64 - 1.0) * 0.9) as i64;
             self.steps = if adjusted < 0 { 0 } else { adjusted as usize };
         }
@@ -463,10 +509,16 @@ impl Simulator {
 
         self.transmission.lock().unwrap().update(timestep);
 
-        self.filtered_engine_speed =
-            self.filtered_engine_speed
-                + (timestep / (100.0 + timestep))
-                    * (self.engine.get_rpm(&self.solver.bodies) - self.filtered_engine_speed);
+        // `Simulator::updateFilteredEngineSpeed`. Note the reference weights the
+        // *new* value by `1 - alpha` (alpha ~= 1e-6 at 10 kHz), so this is
+        // effectively an instantaneous read — the DSP's speed attenuation
+        // depends on it, so it is transliterated rather than "fixed".
+        {
+            let alpha = timestep / (100.0 + timestep);
+            let rpm = self.engine.get_rpm(&self.solver.bodies);
+            self.filtered_engine_speed =
+                alpha * self.filtered_engine_speed + (1.0 - alpha) * rpm;
+        }
 
         // `resetAngle` + drift correction
         let output_theta = {
@@ -631,9 +683,7 @@ impl Simulator {
                     + 0.1 * chamber.exhaust_runner_and_primary.dynamic_pressure(1.0, 0.0)
                     + 0.1 * chamber.exhaust_runner_and_primary.dynamic_pressure(-1.0, 0.0));
 
-            // The delay filter (exhaust runner + primary length / speed of
-            // sound) is part of the DSP chain and is not attached yet.
-            let delayed_exhaust_pulse = exhaust_flow;
+            let delayed_exhaust_pulse = self.delay_filters[i].fast_f(exhaust_flow);
 
             let audio_volume = self.engine.exhausts[exhaust_index].audio_volume;
             let attenuation_sound = head.sound_attenuation(cylinder_index);
@@ -643,6 +693,41 @@ impl Simulator {
                 * (audio_volume * delayed_exhaust_pulse / cylinder_count as f64)
                 * (1.0 / (exhaust_length * exhaust_length));
         }
+
+        self.synthesizer.write_input(&self.exhaust_flow_staging_buffer);
+    }
+
+    // ------------------------------------------------------------- audio out
+
+    /// `Synthesizer::renderAudio()` (one block) — the reference runs this on a
+    /// dedicated audio thread; here the caller drives it, which is what makes
+    /// the output reproducible.
+    pub fn render_audio_block(&mut self) -> usize {
+        // Nothing to render until the application installs the impulse response
+        // recording (the reference reads an uninitialised buffer here).
+        if !self.synthesizer.has_impulse_response() {
+            return 0;
+        }
+
+        // The synthesizer and the physics share one `rand()` sequence in the
+        // original, so they must share one `Rng` here too.
+        let rng = &mut self.rng;
+        self.synthesizer.render_block(rng)
+    }
+
+    /// `Simulator::readAudioOutput`
+    pub fn read_audio_output(&mut self, buffer: &mut [i16]) -> usize {
+        self.synthesizer.read_audio_output(buffer)
+    }
+
+    /// `Simulator::getSynthesizerInputLatency`
+    pub fn synthesizer_latency(&self) -> f64 {
+        self.synthesizer.get_latency()
+    }
+
+    /// `Simulator::getSynthesizerInputLatencyTarget`
+    pub fn target_synthesizer_latency(&self) -> f64 {
+        self.target_synthesizer_latency
     }
 
     /// `Simulator::endFrame`
@@ -650,6 +735,8 @@ impl Simulator {
         if self.engine.get_crankshaft_count() == 0 {
             return;
         }
+
+        self.synthesizer.end_input_block();
 
         let frame_timestep = self.steps as f64 * self.get_timestep();
         if frame_timestep == 0.0 {

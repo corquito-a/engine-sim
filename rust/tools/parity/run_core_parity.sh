@@ -35,6 +35,16 @@ g++ -std=c++14 -O2 -fpermissive -D__forceinline=inline \
     -I "$REF_CORE/dependencies/submodules/csv-io/include" \
     -c "$REF_CORE/src/combustion_chamber.cpp" -o "$WORK/combustion_chamber_parity.o"
 
+# `Synthesizer::renderAudio` draws two `rand()` values per sample, so this TU
+# needs the same substitution or the audio desynchronises from the Rust stream.
+g++ -std=c++14 -O2 -fpermissive -D__forceinline=inline \
+    -include cmath -include cstdlib -include cstring \
+    -include "$HERE/parity_rand.h" \
+    -I "$REF_CORE/include" \
+    -I "$REF_CORE/dependencies/submodules/simple-2d-constraint-solver/include" \
+    -I "$REF_CORE/dependencies/submodules/csv-io/include" \
+    -c "$REF_CORE/src/synthesizer.cpp" -o "$WORK/synthesizer_parity.o"
+
 g++ -std=c++14 -O2 -fpermissive -D__forceinline=inline \
     -include cmath -include cstdlib -include cstring \
     -I "$REF_CORE/include" \
@@ -42,7 +52,7 @@ g++ -std=c++14 -O2 -fpermissive -D__forceinline=inline \
     -I "$REF_CORE/dependencies/submodules/csv-io/include" \
     -Wl,--allow-multiple-definition \
     "$HERE/core_reference.cpp" "$HERE/parity_rand.cpp" \
-    "$WORK/combustion_chamber_parity.o" "$REF_CORE/librefcore.a" \
+    "$WORK/combustion_chamber_parity.o" "$WORK/synthesizer_parity.o" "$REF_CORE/librefcore.a" \
     -o "$WORK/core_reference"
 
 echo "== building rust =="
