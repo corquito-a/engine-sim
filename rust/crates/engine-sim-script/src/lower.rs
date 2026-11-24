@@ -708,6 +708,16 @@ impl Arena {
             unreachable!()
         };
         *items = ids;
+
+        // `IrNode::setScopeParent` forwards the *node's* parent scope to the
+        // attribute list, and it is called whenever the node is registered as a
+        // component -- so an attribute's value looks names up in the node's
+        // enclosing scope, never in the node itself. Without this a label that
+        // happens to equal an attribute name (`i(x: 5, y: x)`) resolves to the
+        // attribute and reports a circular reference where the original reports
+        // an unresolved one.
+        self.entries[list].scope_parent = self.entries[node].scope_parent;
+
         self.finish(list);
 
         list
@@ -771,6 +781,15 @@ impl Arena {
                 });
                 let left = self.lower_value(id, left);
                 let right = self.lower_value(id, right);
+
+                // `IrBinaryOperator`'s constructor: the right-hand operand of a
+                // `.` "will *always* be a standard label that doesn't reference
+                // anything itself", so it stops being checked -- neither
+                // expanded nor reported as an unresolved reference.
+                if *op == BinOp::Dot {
+                    self.entries[right].check_references = false;
+                }
+
                 let Kind::Binary { left: left_slot, right: right_slot, .. } =
                     &mut self.entries[id].kind
                 else {
