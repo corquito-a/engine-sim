@@ -96,7 +96,7 @@ impl Arena {
             return;
         }
 
-        let new_context = contexts.new_child(context, Some(structure), true);
+        let new_context = contexts.main_child(context, Some(structure));
 
         if let Some(definition) = definition {
             // The base implementation, not the definition's own override.
@@ -125,7 +125,7 @@ fn instantiation_frames(contexts: &ContextArena, context: usize) -> Vec<Instanti
 
 #[cfg(test)]
 mod tests {
-    use crate::lower::Arena;
+    use crate::lower::{Arena, Kind};
     use crate::parser::parse_unit;
 
     fn run(source: &str) -> Arena {
@@ -177,6 +177,43 @@ mod tests {
         let error = arena.errors().first().expect("an error");
         assert!(error.is_instantiation_error());
         assert_eq!(error.instantiation.as_ref().map(|frames| frames.len()), Some(1));
+    }
+
+    #[test]
+    fn instantiation_frames_run_outermost_first() {
+        // a -> b -> c -> a: the report raised while checking root `a` travelled
+        // through b then c, so the chain reads outermost first.
+        let arena = run(
+            "public node a { input x; b(1) }\n\
+             public node b { input y; c(1) }\n\
+             public node c { input z; a(1) }\n",
+        );
+
+        let error = arena
+            .errors()
+            .iter()
+            .find(|error| error.instantiation.as_ref().map(Vec::len) == Some(2))
+            .expect("a two-frame cycle");
+
+        let names: Vec<String> = error
+            .instantiation
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|frame| {
+                let definition = match arena.kind(frame.node) {
+                    Kind::Node(data) => data.definition.expect("resolved"),
+                    _ => panic!("a frame is always a node"),
+                };
+
+                match arena.kind(definition) {
+                    Kind::NodeDefinition(data) => data.name.data.clone(),
+                    _ => panic!("a node definition"),
+                }
+            })
+            .collect();
+
+        assert_eq!(names, vec!["b".to_string(), "c".to_string()]);
     }
 
     #[test]
