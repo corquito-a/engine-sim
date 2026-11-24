@@ -162,7 +162,12 @@ fn write_node(text: &mut String, lines: bool, node: &Node) {
 }
 
 fn write_port(text: &mut String, lines: bool, port: &AttributeDefinition) {
-    text.push_str(&format!("(port (dir {}) (name ", port.direction.as_str()));
+    // The direction keyword is a token like any other: it is what `V0090`/
+    // `V0100` are reported at, and it is a registered token of the definition,
+    // so it moves the summary token's line.
+    text.push_str("(port (dir ");
+    write_token(text, lines, &port.direction_token);
+    text.push_str(") (name ");
     write_token(text, lines, &port.name);
     text.push_str(&format!(") (alias {})", if port.is_alias { 1 } else { 0 }));
 

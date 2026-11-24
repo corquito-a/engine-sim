@@ -719,10 +719,8 @@ Two causes, both found by shrinking a fixture to four lines:
 
 What is left after this phase was the unported `checkTypes` (`T0010`/`T0011`,
 four fixtures) and the `validateBuiltinMappings` tail (`V0080`/`V0081`, one
-fixture); the next two sections close both. What remains today is five
-`R0060`s where a member resolves in the original and not in the port, one
-extra `R0061`, and one fixture where the `R0080` cycle is detected at a
-different link.
+fixture); the next three sections close both, and the last of them closes the
+reference-phase residuals too. The gate ends at `MATCH 94, DIFF 0`.
 
 The lesson that keeps repeating: the failing fixture mixes several questions at
 once. Five-line probes answer them one at a time in minutes, and every cause
@@ -822,14 +820,87 @@ Two things the shape of that file has to get right:
    the original. The dump now emits a `builtin,<name>` row for every registered
    name, and `every_registered_builtin_has_a_port_table` fails if one goes
    missing.
-2. **The oracle cannot point `V0090`/`V0100` at the right line.** The IR dump
-   carries the direction keyword's spelling but not its position, so the
-   injected `IrAttributeDefinition` gets a synthesized direction token on line
-   1. The port reports the real token. Codes still match, and the recorded
-   fixtures compare codes rather than lines, so this is a documented artifact
-   rather than a difference -- with a comment at the synthesis site so it is not
-   mistaken for a bug.
+2. **The oracle could not point `V0090`/`V0100` at the right line.** The IR
+   dump carried the direction keyword's spelling but not its position, so the
+   injected `IrAttributeDefinition` got a synthesized direction token on line 1.
+   Codes still matched and the recorded fixtures compare codes rather than
+   lines, so it was left documented -- until the same synthesis turned out to
+   move a definition's *summary* token, and with it the `R0080` line in
+   `infinite_loop_test_1`. The dump now carries the direction as a token and the
+   artifact is gone (see the last section).
 
 Three negative fixtures pin the four codes (`builtin_port_not_on_reference`,
 `builtin_alias_mismatch`, `builtin_modify_mismatch`), which took the error gate
 to 20 fixtures.
+
+## The reference phase's second entry point, and one visibility bug
+
+Six diffs were left, and five of them were the same missing piece: the phase has
+*two* entry points, and only one was ported.
+
+`IrCompilationUnit::_checkInstantiation` walks the unit's components against one
+fresh main context. That is the entry point the port had. The other is
+`IrNode::_checkInstantiation`: every structure is visited once
+(`m_instantiationChecked`), components first, and a node then checks its
+*definition* against a **main child of a fresh non-main root, focused on the
+instance**. That is what makes a definition body's names resolve through the
+instance -- and it is where `R0060` comes from, because the same expression that
+dead-ends in the definition's own empty context resolves in an instantiation
+context and is then missing its member. Alongside it, `IrNode::checkReferences`
+overrides the base walk: it refuses to descend into a context that already holds
+the node (`findContext`) and gives the definition a child context, while the
+node's own *attributes* are still checked against the input context.
+
+Shrinking `deep_error_isolated` showed the difference in one run:
+
+```
+node confusion {
+    input some_input;
+    output test: some_input.a;   // R0060 here, but only through an instance
+}
+confusion test(5)
+```
+
+With both entry points in place the report went `MATCH 88 -> 93`, and the only
+diff left was the `R0080` link. Getting there surfaced a **pre-existing**
+visibility bug worth recording: `IrAttribute`'s constructors all call
+`setVisibility(IrVisibility::Public)`, so an instance's attributes are
+externally accessible (`myNode.A`), and only body *nodes* keep the private
+default that `R0061` reports. The port left attributes at the
+`IrParserStructure` default (private), which cost one error in
+`general_syntax_test_37` (it only showed up once definitions were checked per
+instantiation) and the extra `R0061` in `resolution_errors_1`; both disappeared
+when the attribute was lowered as public.
+
+The last diff was not a port bug at all. `infinite_loop_test_1` reports `R0080`
+at the *summary token* of the link it returns to, and one of those links is an
+`IrAttributeDefinition`. A definition's summary token combines its registered
+tokens, one of which is the **direction keyword** -- and the IR dump carried the
+direction's spelling but not its position, so the oracle synthesized it at line
+1 (the same artifact noted under `V0090`/`V0100`). The dump now carries it as a
+token (`(dir (tok "input" 1 <line>))`), which fixes the `R0080` line, the
+`V0090`/`V0100` lines, and that whole class of "the port is right and the oracle
+is wrong" reports.
+
+That closes the language gate:
+
+| | before | after |
+|---|---|---|
+| MATCH | 88 | **94** |
+| DIFF | 6 | **0** |
+| `R0060` missing | 5 | 0 |
+| `R0061` extra | 1 | 0 |
+| `R0080` on the wrong link | 1 | 0 |
+
+Zero diffs is not "the port is finished": 19 fixtures still fail to parse, and
+171 are excluded because their expected errors come from the reference's own
+unspecified tokens (`--strict` scores those, and it is the honest measure of
+what is left: `DIFF 29`). What has changed is that every fixture the port *can*
+be compared on now agrees, so the next gap is parser coverage, not the IR
+pipeline.
+
+**The lesson this unit adds:** a phase with two entry points looks almost right
+with one of them, because the second only changes *which context* a structure is
+checked in. The missing part is invisible in the port and obvious in the
+original's `resolveAll` -- so when a family of errors is missing, the first
+question is now "which traversal am I not doing", not "which rule is wrong".
