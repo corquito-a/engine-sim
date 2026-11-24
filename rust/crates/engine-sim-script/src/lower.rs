@@ -276,13 +276,16 @@ impl Arena {
                 }
                 Statement::AutoDefinition(definition) => {
                     // `immediate_node_definition: AUTO specific_node_definition`
-                    // adds the instance before it registers the definition.
+                    // adds the instance before it registers the definition, and
+                    // the instance carries the definition's *name* -- which is
+                    // what makes the definition reachable as a name from inside
+                    // its own body.
                     let node_id = self.begin(
                         Some(unit_id),
                         Kind::Node(NodeData {
                             type_name: definition.name.clone(),
                             library: Token::unspecified(),
-                            name: Token::unspecified(),
+                            name: definition.name.clone(),
                             attributes: usize::MAX,
                             definition: None,
                             is_interface: false,

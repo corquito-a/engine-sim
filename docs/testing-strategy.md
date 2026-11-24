@@ -665,8 +665,8 @@ from 551 s to 19 s.
 
 | | default | expand (new default) | + reference phase |
 |---|---|---|---|
-| MATCH | 63 | **69** | 50 |
-| DIFF | 31 | **25** | 44 |
+| MATCH | 63 | **69** | 57 |
+| DIFF | 31 | **25** | 37 |
 | `E0010` | 9 | **0** | 0 |
 
 The promotion was justified the only way it can be: `expand` fixed five fixtures
@@ -681,19 +681,27 @@ reports but **over-reports** `R0050` on 19 fixtures, so it stays behind
 
 | | without | with |
 |---|---|---|
-| MATCH | 69 | 50 |
+| MATCH | 69 | 57 |
 | `R0050` missing | 18 | 1 |
-| `R0060` missing | 19 | 6 |
+| `R0060` missing | 19 | 5 |
 | `R0080` missing | 3 | 1 |
 
 Sharing the expansions between phases cut the over-reporting roughly in half
-(`R0060` 14 -> 6, `R0080` 3 -> 1); the rest is a resolution question, not a
-reporting one: a label inside a definition resolves through the scope chain in
-the original and does not in the port, which is why
-`std::vector(vector.w, vector.z, ...)` yields four invented `R0050`s in
-`general_syntax_test_8.mr`. That is the next piece of work, and it is the same
-shape as this one: shrink a fixture to the smallest script that resolves in the
-original and not in the port, then fix the model.
+(`R0060` 14 -> 6, `R0080` 3 -> 1). One more cause fell out of a five-line probe:
+**`auto node X` also instantiates a node named `X`**, before registering the
+definition (`immediate_node_definition: AUTO specific_node_definition`), and
+`IrCompilationUnit::resolveLocalName` finds *nodes*. Without the name, a
+reference to `X` from inside `X`'s own body resolved in the original and not in
+the port (`general_syntax_test_30/32/33`); with it, 44 -> 37.
+
+What is left is a resolution question, not a reporting one: a label whose
+reference should succeed through the scope chain still fails in the port, which
+is why `std::vector(vector.w, vector.z, ...)` yields four invented `R0050`s in
+`general_syntax_test_8.mr`, and why some `R0050`s come out *repeated* (three
+copies on one line) -- that repetition is a clue worth following, because the
+original visits each structure once. The next piece of work is the same shape as
+this one: shrink a fixture to the smallest script that resolves in the original
+and not in the port, then fix the model.
 
 The lesson that keeps repeating: the failing fixture mixes several questions at
 once. Five-line probes answer them one at a time in minutes, and every one of the
