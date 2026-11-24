@@ -217,6 +217,22 @@ impl Rules {
         }
     }
 
+    /// `LanguageRules::resolveChannelType` -- the channel type a builtin node
+    /// was registered with. The engine's rules and the fixtures' rules register
+    /// different *names* for the same `ChannelType` objects, so this has to be
+    /// per ruleset.
+    pub fn channel_type(self, builtin: &str) -> Option<&'static str> {
+        let table = match self {
+            Rules::EngineSim => crate::language_rules::ENGINE_SIM_BUILTIN_CHANNEL_TYPES,
+            Rules::Piranha => crate::language_rules::PIRANHA_BUILTIN_CHANNEL_TYPES,
+        };
+
+        table
+            .iter()
+            .find(|rule| rule.builtin == builtin)
+            .map(|rule| rule.channel_type)
+    }
+
     /// `LanguageRules::resolveLiteralBuiltinType` -- which builtin node stands
     /// behind a literal of this type.
     pub fn literal_builtin(self, literal: LiteralKind) -> Option<&'static str> {

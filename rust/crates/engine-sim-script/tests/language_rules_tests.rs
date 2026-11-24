@@ -12,8 +12,9 @@ use std::path::{Path, PathBuf};
 
 use engine_sim_script::ir::{BinOp, UnOp};
 use engine_sim_script::language_rules::{
-    LiteralKind, ENGINE_SIM_CONVERSIONS, ENGINE_SIM_LITERALS, ENGINE_SIM_OPERATORS, ENGINE_SIM_UNARY,
-    PIRANHA_CONVERSIONS, PIRANHA_LITERALS, PIRANHA_OPERATORS, PIRANHA_UNARY,
+    LiteralKind, ENGINE_SIM_BUILTIN_CHANNEL_TYPES, ENGINE_SIM_CONVERSIONS, ENGINE_SIM_LITERALS,
+    ENGINE_SIM_OPERATORS, ENGINE_SIM_UNARY, PIRANHA_BUILTIN_CHANNEL_TYPES, PIRANHA_CONVERSIONS,
+    PIRANHA_LITERALS, PIRANHA_OPERATORS, PIRANHA_UNARY,
 };
 
 fn root() -> PathBuf {
@@ -85,6 +86,57 @@ fn calls<'a>(source: &'a str, name: &str) -> Vec<&'a str> {
         let close = close.expect("unbalanced call");
         found.push(&after[open + 1..close]);
         search = &search[index + name.len()..];
+    }
+
+    found
+}
+
+/// The argument lists of every `registerBuiltinType<...>(...)` call that names a
+/// channel type.
+fn calls_with_channel_type(source: &str) -> Vec<&str> {
+    let marker = "registerBuiltinType";
+    let mut found = Vec::new();
+    let mut search = source;
+
+    while let Some(index) = search.find(marker) {
+        let after = &search[index + marker.len()..];
+        let Some(open) = after.find('(') else {
+            search = &search[index + marker.len()..];
+            continue;
+        };
+
+        // Skip the template argument list: `<...>` between the name and `(`.
+        let head = &after[..open];
+        if !head.trim_start().starts_with('<') {
+            search = &search[index + marker.len()..];
+            continue;
+        }
+
+        let mut depth = 0usize;
+        let mut close = None;
+        for (offset, character) in after[open..].char_indices() {
+            match character {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        close = Some(open + offset);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let close = close.expect("unbalanced call");
+        let arguments = &after[open + 1..close];
+
+        // Only the registrations that name a channel type: `, &Type`.
+        if arguments.contains("&") {
+            found.push(arguments);
+        }
+
+        search = &search[index + marker.len()..];
     }
 
     found
@@ -180,6 +232,7 @@ fn fields(arguments: &str) -> Vec<String> {
 
 #[derive(Debug, PartialEq)]
 struct Tables {
+    builtins: Vec<(String, String)>,
     literals: Vec<(LiteralKind, String)>,
     operators: Vec<(BinOp, String, String, String)>,
     unary: Vec<(UnOp, String, String)>,
@@ -238,7 +291,17 @@ fn parse(source: &str, names: &BTreeMap<String, String>) -> Tables {
         })
         .collect();
 
-    Tables { literals, operators, unary, conversions }
+    let builtins = calls_with_channel_type(&source)
+        .into_iter()
+        .map(|arguments| {
+            let comma = arguments.find(',').expect("a channel type argument");
+            let name = builtin_name(&arguments[..comma]);
+            let channel_type = channel_type(&arguments[comma + 1..], names);
+            (name, channel_type)
+        })
+        .collect();
+
+    Tables { builtins, literals, operators, unary, conversions }
 }
 
 fn generated_literals(rules: engine_sim_script::Rules) -> Vec<(LiteralKind, String)> {
@@ -294,6 +357,15 @@ fn check(rules: engine_sim_script::Rules, relative: &str) {
 
     // `calls` counts every call site, so a table that lost a row fails here even
     // before the element comparison.
+    let generated_builtins: Vec<(String, String)> = match rules {
+        engine_sim_script::Rules::EngineSim => ENGINE_SIM_BUILTIN_CHANNEL_TYPES,
+        engine_sim_script::Rules::Piranha => PIRANHA_BUILTIN_CHANNEL_TYPES,
+    }
+    .iter()
+    .map(|rule| (rule.builtin.to_string(), rule.channel_type.to_string()))
+    .collect();
+
+    assert_eq!(parsed.builtins, generated_builtins, "{relative}: builtin channel types");
     assert_eq!(parsed.literals, generated_literals(rules), "{relative}: literal rules");
     assert_eq!(parsed.operators, generated_operators(rules), "{relative}: operator rules");
     assert_eq!(parsed.unary, generated_unary(rules), "{relative}: unary rules");

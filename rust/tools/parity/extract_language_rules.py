@@ -86,6 +86,17 @@ def normalise_type(field: str, names: dict[str, str]) -> str:
 def parse(source: str, names: dict[str, str]) -> dict[str, list[tuple]]:
     source = strip_comments(source)
 
+    # `registerBuiltinType<...>("name", &Type)` -- only the ones that name a
+    # channel type; the rest have none (`BuiltinTypeInfo::nodeType` is null).
+    builtins = []
+    for match in re.finditer(
+        r'registerBuiltinType\s*<[^;]*?>\s*\(\s*"([^"]+)"\s*,\s*&([^)]+)\)', source
+    ):
+        builtins.append((match.group(1), normalise_type(match.group(2), names)))
+    assert len(builtins) == len(
+        re.findall(r"registerBuiltinType\s*<[^;]*?>\s*\([^;]*?,\s*&", source)
+    ), "a registerBuiltinType call with a channel type was not parsed"
+
     def count(name: str) -> int:
         return len(re.findall(rf"\b{name}\s*\(", source))
 
@@ -130,6 +141,7 @@ def parse(source: str, names: dict[str, str]) -> dict[str, list[tuple]]:
     assert len(conversions) == count("registerConversion"), "a registerConversion call was not parsed"
 
     return {
+        "builtins": builtins,
         "literals": literals,
         "operators": operators,
         "unary": unary,
@@ -191,8 +203,26 @@ def render(tables: dict[str, dict[str, list[tuple]]]) -> str:
         "",
     ]
 
+    lines.append("/// `registerBuiltinType<...>(\"name\", &ChannelType)` -- the builtins")
+    lines.append("/// that name a channel type, in registration order.")
+    lines.append("#[derive(Clone, Copy, Debug, PartialEq, Eq)]")
+    lines.append("pub struct BuiltinChannelType {")
+    lines.append("    pub builtin: &'static str,")
+    lines.append("    pub channel_type: &'static str,")
+    lines.append("}")
+    lines.append("")
+
     for set_name in ("ENGINE_SIM", "PIRANHA"):
         table = tables[set_name]
+
+        lines.append(f"pub const {set_name}_BUILTIN_CHANNEL_TYPES: &[BuiltinChannelType] = &[")
+        for builtin, channel_type in table["builtins"]:
+            lines.append(
+                f'    BuiltinChannelType {{ builtin: "{builtin}", channel_type: "{channel_type}" }},'
+            )
+        lines.append("];")
+        lines.append("")
+
         lines.append(f"pub const {set_name}_LITERALS: &[LiteralRule] = &[")
         for literal, builtin in table["literals"]:
             lines.append(f'    LiteralRule {{ literal: LiteralKind::{literal}, builtin: "{builtin}" }},')
@@ -241,7 +271,8 @@ def main() -> int:
 
     for name, table in tables.items():
         print(
-            f"{name}: {len(table['literals'])} literals, {len(table['operators'])} operators, "
+            f"{name}: {len(table['builtins'])} builtin channel types, "
+            f"{len(table['literals'])} literals, {len(table['operators'])} operators, "
             f"{len(table['unary'])} unary, {len(table['conversions'])} conversions"
         )
 

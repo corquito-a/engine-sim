@@ -48,6 +48,44 @@ pub struct ConversionRule {
     pub builtin: &'static str,
 }
 
+/// `registerBuiltinType<...>("name", &ChannelType)` -- the builtins
+/// that name a channel type, in registration order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BuiltinChannelType {
+    pub builtin: &'static str,
+    pub channel_type: &'static str,
+}
+
+pub const ENGINE_SIM_BUILTIN_CHANNEL_TYPES: &[BuiltinChannelType] = &[
+    BuiltinChannelType { builtin: "__engine_sim__float", channel_type: "FloatNodeType" },
+    BuiltinChannelType { builtin: "__engine_sim__int", channel_type: "IntNodeType" },
+    BuiltinChannelType { builtin: "__engine_sim__bool", channel_type: "BoolNodeType" },
+    BuiltinChannelType { builtin: "__engine_sim__string", channel_type: "StringNodeType" },
+    BuiltinChannelType { builtin: "__engine_sim__engine_channel", channel_type: "EngineChannel" },
+    BuiltinChannelType { builtin: "__engine_sim__crankshaft_channel", channel_type: "CrankshaftChannel" },
+    BuiltinChannelType { builtin: "__engine_sim__rod_journal_channel", channel_type: "RodJournalChannel" },
+    BuiltinChannelType { builtin: "__engine_sim__connecting_rod_channel", channel_type: "ConnectingRodChannel" },
+    BuiltinChannelType { builtin: "__engine_sim__piston_channel", channel_type: "PistonChannel" },
+    BuiltinChannelType { builtin: "__engine_sim__cylinder_bank_channel", channel_type: "CylinderBankChannel" },
+    BuiltinChannelType { builtin: "__engine_sim__function_channel", channel_type: "FunctionChannel" },
+    BuiltinChannelType { builtin: "__engine_sim__cylinder_head_channel", channel_type: "CylinderHeadChannel" },
+    BuiltinChannelType { builtin: "__engine_sim__camshaft_channel", channel_type: "CamshaftChannel" },
+    BuiltinChannelType { builtin: "__engine_sim__intake_channel", channel_type: "IntakeChannel" },
+    BuiltinChannelType { builtin: "__engine_sim__exhaust_system_channel", channel_type: "ExhaustSystemChannel" },
+    BuiltinChannelType { builtin: "__engine_sim__ignition_module_channel", channel_type: "IgnitionModuleChannel" },
+    BuiltinChannelType { builtin: "__engine_sim__ignition_wire_channel", channel_type: "IgnitionWireChannel" },
+    BuiltinChannelType { builtin: "__engine_sim__fuel_channel", channel_type: "FuelChannel" },
+    BuiltinChannelType { builtin: "__engine_sim__impulse_response_channel", channel_type: "ImpulseResponseChannel" },
+    BuiltinChannelType { builtin: "__engine_sim__valvetrain_channel", channel_type: "ValvetrainChannel" },
+    BuiltinChannelType { builtin: "__engine_sim__vehicle_channel", channel_type: "VehicleChannel" },
+    BuiltinChannelType { builtin: "__engine_sim__transmission_channel", channel_type: "TransmissionChannel" },
+    BuiltinChannelType { builtin: "__engine_sim__throttle_channel", channel_type: "ThrottleChannel" },
+    BuiltinChannelType { builtin: "__engine_sim__literal_float", channel_type: "FloatNodeType" },
+    BuiltinChannelType { builtin: "__engine_sim__literal_string", channel_type: "StringNodeType" },
+    BuiltinChannelType { builtin: "__engine_sim__literal_int", channel_type: "IntNodeType" },
+    BuiltinChannelType { builtin: "__engine_sim__literal_bool", channel_type: "BoolNodeType" },
+];
+
 pub const ENGINE_SIM_LITERALS: &[LiteralRule] = &[
     LiteralRule { literal: LiteralKind::Float, builtin: "__engine_sim__literal_float" },
     LiteralRule { literal: LiteralKind::String, builtin: "__engine_sim__literal_string" },
@@ -79,6 +117,19 @@ pub const ENGINE_SIM_CONVERSIONS: &[ConversionRule] = &[
     ConversionRule { input: "IntNodeType", output: "FloatNodeType", builtin: "__engine_sim__int_to_float" },
     ConversionRule { input: "IntNodeType", output: "StringNodeType", builtin: "__engine_sim__int_to_string" },
     ConversionRule { input: "StringNodeType", output: "IntNodeType", builtin: "__engine_sim__string_to_int" },
+];
+
+pub const PIRANHA_BUILTIN_CHANNEL_TYPES: &[BuiltinChannelType] = &[
+    BuiltinChannelType { builtin: "__piranha__int", channel_type: "IntNodeType" },
+    BuiltinChannelType { builtin: "__piranha__float", channel_type: "FloatNodeType" },
+    BuiltinChannelType { builtin: "__piranha__string", channel_type: "StringNodeType" },
+    BuiltinChannelType { builtin: "__piranha__vector", channel_type: "VectorType" },
+    BuiltinChannelType { builtin: "__piranha__bool", channel_type: "BoolNodeType" },
+    BuiltinChannelType { builtin: "__piranha__vector_constructor", channel_type: "VectorType" },
+    BuiltinChannelType { builtin: "__piranha__literal_string", channel_type: "StringNodeType" },
+    BuiltinChannelType { builtin: "__piranha__literal_int", channel_type: "IntNodeType" },
+    BuiltinChannelType { builtin: "__piranha__literal_float", channel_type: "FloatNodeType" },
+    BuiltinChannelType { builtin: "__piranha__literal_bool", channel_type: "BoolNodeType" },
 ];
 
 pub const PIRANHA_LITERALS: &[LiteralRule] = &[
