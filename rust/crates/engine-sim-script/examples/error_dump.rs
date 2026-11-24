@@ -14,7 +14,6 @@ use engine_sim_script::lower::Arena;
 use engine_sim_script::Rules;
 use engine_sim_script::resolve::load_graph;
 
-use std::path::Path;
 
 fn main() {
     let mut rules = Rules::EngineSim;

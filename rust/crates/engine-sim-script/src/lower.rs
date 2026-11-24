@@ -130,7 +130,7 @@ pub enum Kind {
     AttributeDefinitionList(Vec<StructureId>),
     NodeList(Vec<StructureId>),
     Import(ImportData),
-    Literal(Literal),
+    Literal { token: Token, literal: Literal },
     Label(Token),
     NodeRef(StructureId),
     Binary { token: Token, op: BinOp, left: StructureId, right: StructureId },
@@ -360,7 +360,7 @@ impl Arena {
             Kind::NodeRef(node) => vec![*node],
             Kind::Binary { left, right, .. } => vec![*left, *right],
             Kind::Unary { operand, .. } => vec![*operand],
-            Kind::Import(_) | Kind::Literal(_) | Kind::Label(_) => Vec::new(),
+            Kind::Import(_) | Kind::Literal { .. } | Kind::Label(_) => Vec::new(),
         }
     }
 
@@ -452,6 +452,16 @@ impl Arena {
     fn add_child(&mut self, parent: StructureId, kind: Kind) -> StructureId {
         let child = self.begin(Some(parent), kind);
         self.finish(child);
+        child
+    }
+
+    /// `IrValueConstant`'s constructor calls `useToken`, which registers the
+    /// literal's token, so the literal's summary *is* that token and every
+    /// enclosing summary folds it in. An attribute's summary therefore spans
+    /// its value, which is what the original reports positions from.
+    fn add_literal(&mut self, parent: StructureId, token: Token, literal: Literal) -> StructureId {
+        let child = self.add_child(parent, Kind::Literal { token: token.clone(), literal });
+        self.entries[child].summary = token;
         child
     }
 
@@ -667,11 +677,17 @@ impl Arena {
 
     fn lower_value(&mut self, parent: StructureId, value: &Value) -> StructureId {
         match value {
-            Value::Int { value } => self.add_child(parent, Kind::Literal(Literal::Int(*value))),
-            Value::Float { value } => self.add_child(parent, Kind::Literal(Literal::Float(*value))),
-            Value::Bool { value } => self.add_child(parent, Kind::Literal(Literal::Bool(*value))),
-            Value::Str { value } => {
-                self.add_child(parent, Kind::Literal(Literal::Str(value.clone())))
+            Value::Int { token, value } => {
+                self.add_literal(parent, token.clone(), Literal::Int(*value))
+            }
+            Value::Float { token, value } => {
+                self.add_literal(parent, token.clone(), Literal::Float(*value))
+            }
+            Value::Bool { token, value } => {
+                self.add_literal(parent, token.clone(), Literal::Bool(*value))
+            }
+            Value::Str { token, value } => {
+                self.add_literal(parent, token.clone(), Literal::Str(value.clone()))
             }
             Value::Label { token } => self.add_child(parent, Kind::Label(token.clone())),
             Value::NodeRef { node } => {
@@ -800,10 +816,12 @@ impl Arena {
 
     fn to_value(&self, id: StructureId) -> Value {
         match self.kind(id) {
-            Kind::Literal(Literal::Int(value)) => Value::Int { value: *value },
-            Kind::Literal(Literal::Float(value)) => Value::Float { value: *value },
-            Kind::Literal(Literal::Bool(value)) => Value::Bool { value: *value },
-            Kind::Literal(Literal::Str(value)) => Value::Str { value: value.clone() },
+            Kind::Literal { token, literal } => match literal {
+                Literal::Int(value) => Value::Int { token: token.clone(), value: *value },
+                Literal::Float(value) => Value::Float { token: token.clone(), value: *value },
+                Literal::Bool(value) => Value::Bool { token: token.clone(), value: *value },
+                Literal::Str(value) => Value::Str { token: token.clone(), value: value.clone() },
+            },
             Kind::Label(token) => Value::Label { token: token.clone() },
             Kind::NodeRef(node) => Value::NodeRef { node: Box::new(self.to_node(*node)) },
             Kind::Binary { token, op, left, right } => Value::Binary {

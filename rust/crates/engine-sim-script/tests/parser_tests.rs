@@ -198,7 +198,7 @@ fn definitions_record_every_port_field() {
     assert_eq!(ports[0].direction, Direction::Input);
     assert_eq!(ports[0].name.data, "a");
     assert!(!ports[0].is_alias);
-    assert_eq!(ports[0].default_value, Some(Value::Int { value: 1 }));
+    assert_eq!(ports[0].default_value, Some(int(1)));
 
     assert_eq!(ports[1].direction, Direction::Output);
     assert!(ports[1].is_alias);
@@ -209,7 +209,7 @@ fn definitions_record_every_port_field() {
 
     assert_eq!(ports[2].direction, Direction::Modify);
     assert_eq!(ports[3].direction, Direction::Toggle);
-    assert_eq!(ports[3].default_value, Some(Value::Bool { value: true }));
+    assert_eq!(ports[3].default_value, Some(boolean(true)));
 
     let (library, type_name) = ports[4].type_info.as_ref().unwrap();
     assert_eq!(library.data, "ns");
@@ -249,7 +249,7 @@ fn body_node_lists() {
 
     assert_eq!(body[0].type_name.data, "b");
     assert!(!body[0].name.specified);
-    assert_eq!(body[0].attributes[0].value, Value::Int { value: 1 });
+    assert_eq!(body[0].attributes[0].value, int(1));
 
     assert_eq!(body[1].type_name.data, "d");
     // `c.d(2)` carries `c` as the trailing `this` attribute.
@@ -288,13 +288,13 @@ fn arithmetic_precedence_matches_the_grammar() {
     // ((1 + (2 * 3)) - (4 / 5))
     match value {
         Value::Binary { op: BinOp::Sub, left, right, .. } => {
-            assert_eq!(*right, binary(BinOp::Div, Value::Int { value: 4 }, Value::Int { value: 5 }));
+            assert_eq!(*right, binary(BinOp::Div, int(4), int(5)));
             match *left {
                 Value::Binary { op: BinOp::Add, left: inner_left, right: inner_right, .. } => {
-                    assert_eq!(*inner_left, Value::Int { value: 1 });
+                    assert_eq!(*inner_left, int(1));
                     assert_eq!(
                         *inner_right,
-                        binary(BinOp::Mul, Value::Int { value: 2 }, Value::Int { value: 3 })
+                        binary(BinOp::Mul, int(2), int(3))
                     );
                 }
                 other => panic!("expected an addition, got {:?}", other),
@@ -302,6 +302,19 @@ fn arithmetic_precedence_matches_the_grammar() {
         }
         other => panic!("expected a subtraction, got {:?}", other),
     }
+}
+
+fn int(value: i32) -> Value {
+    Value::Int { token: Token::new(value.to_string()), value }
+}
+
+fn boolean(value: bool) -> Value {
+    Value::Bool { token: Token::new(if value { "true" } else { "false" }), value }
+}
+
+fn string(value: String) -> Value {
+    // The IR token holds the unquoted text; the quotes are scanner detail.
+    Value::Str { token: Token::new(value.clone()), value }
 }
 
 fn unary(op: UnOp, operand: Value) -> Value {
@@ -343,13 +356,13 @@ fn unary_operators_bind_tighter_than_multiplication() {
                 *left,
                 binary(
                     BinOp::Mul,
-                    unary(UnOp::NumericNegate, Value::Int { value: 1 }),
-                    Value::Int { value: 2 }
+                    unary(UnOp::NumericNegate, int(1)),
+                    int(2)
                 )
             );
             assert_eq!(
                 *right,
-                unary(UnOp::Positive, Value::Int { value: 3 })
+                unary(UnOp::Positive, int(3))
             );
         }
         other => panic!("expected an addition, got {:?}", other),
@@ -365,8 +378,8 @@ fn parenthesised_expressions_override_precedence() {
         value,
         binary(
             BinOp::Mul,
-            binary(BinOp::Add, Value::Int { value: 1 }, Value::Int { value: 2 }),
-            Value::Int { value: 3 }
+            binary(BinOp::Add, int(1), int(2)),
+            int(3)
         )
     );
 }
@@ -422,7 +435,7 @@ fn adjacent_string_literals_concatenate() {
     let parsed = unit("node a { input x: \"ab\" \"cd\"; }\n");
     let value = definition(&parsed, 0).ports[0].default_value.clone().unwrap();
 
-    assert_eq!(value, Value::Str { value: "abcd".to_string() });
+    assert_eq!(value, string("abcd".to_string()));
 }
 
 #[test]
@@ -433,9 +446,9 @@ fn attributes_can_be_named_or_positional() {
     match value {
         Value::NodeRef { node } => {
             assert!(!node.attributes[0].name.specified);
-            assert_eq!(node.attributes[0].value, Value::Int { value: 1 });
+            assert_eq!(node.attributes[0].value, int(1));
             assert_eq!(node.attributes[1].name.data, "named");
-            assert_eq!(node.attributes[1].value, Value::Int { value: 2 });
+            assert_eq!(node.attributes[1].value, int(2));
         }
         other => panic!("expected a node reference, got {:?}", other),
     }

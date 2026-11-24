@@ -134,7 +134,10 @@ impl Arena {
     /// original recurses before calling `_resolveDefinitions`), once per
     /// structure.
     pub fn resolve_all_definitions(&mut self) {
-        for unit in self.units.clone() {
+        // `IrCompilationUnit::resolveAll` resolves its imports before itself,
+        // and the dump lists units root-first, so the reverse order is the
+        // dependency order: an imported unit's errors are reported first.
+        for unit in self.units.clone().into_iter().rev() {
             self.resolve_definitions(unit);
         }
     }

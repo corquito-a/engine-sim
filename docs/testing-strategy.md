@@ -425,7 +425,7 @@ arena (selectable through `error_dump --rules=piranha`), the 37-name
 and fails if the table and the source disagree -- transcription checked against
 its origin rather than trusted.
 
-## The line-number mismatches, diagnosed
+## The line-number mismatches, fixed
 
 The fourteen ported-phase errors left in the report (`V0010` 3, `V0011` 1,
 `R0020` 3, `R0030` 2, `R0040` 2, `E0020` 2) are all **locations**, not codes or
@@ -454,7 +454,21 @@ reports the entry's own summary line.
 **Root cause, one sentence:** neither side models `IrParserStructure::combine`
 for summary tokens, and literal values carry no token through the dump.
 
-**Fix, in order:**
+**Fixed in that order.** Constants now carry their token through the IR
+(`Value::Int/Float/Bool/Str`), a literal's summary *is* its token (as
+`IrValueConstant`'s constructor does with `useToken`), the dump emits
+`(int (tok "5" 1 4) 5)` in lines mode, the harness builds constants with that
+token and gives unspecified tokens the default `INT_MAX` span, and
+`resolve_all_definitions` walks units deepest-first because
+`IrCompilationUnit::resolveAll` resolves imports before itself.
+
+Result: `MATCH 61, DIFF 33` (from 57/37), and the ported-phase residual is down
+from fourteen errors to five, in three fixtures -- `general_syntax_test_36.mr`
+(`V0010`) and `infinite_loop_test_3.mr` / `infinite_loop_test_4.mr` (`E0020`),
+all of which report a *different* token than the reference rather than a
+different code.
+
+**Original plan, for the record:**
 1. give constant values a token in the IR (`Value::Int/Float/Bool/Str`), the same
    way the operator token was added, and emit it in lines mode;
 2. implement `combine` for summary tokens in the port (`min` lineStart, `max`

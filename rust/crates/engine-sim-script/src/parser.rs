@@ -689,27 +689,27 @@ impl Parser {
             Kind::Int => {
                 let token = self.bump();
                 match token.literal {
-                    Literal::Int(value) => Ok(Value::Int { value }),
+                    Literal::Int(value) => Ok(Value::Int { token: ir_token(&token), value }),
                     _ => unreachable!("INT token without an integer literal"),
                 }
             }
             Kind::Float => {
                 let token = self.bump();
                 match token.literal {
-                    Literal::Float(value) => Ok(Value::Float { value }),
+                    Literal::Float(value) => Ok(Value::Float { token: ir_token(&token), value }),
                     _ => unreachable!("FLOAT token without a float literal"),
                 }
             }
             Kind::Bool => {
                 let token = self.bump();
                 match token.literal {
-                    Literal::Bool(value) => Ok(Value::Bool { value }),
+                    Literal::Bool(value) => Ok(Value::Bool { token: ir_token(&token), value }),
                     _ => unreachable!("BOOL token without a boolean literal"),
                 }
             }
             Kind::Str => {
                 let token = self.string()?;
-                Ok(Value::Str { value: token.data })
+                Ok(Value::Str { value: token.data.clone(), token })
             }
             Kind::Label | Kind::Operator | Kind::NamespacePointer => {
                 // Rewind point: a bare `LABEL` is a label value, anything that

@@ -239,7 +239,10 @@ static IrTokenInfo_string buildToken(const sx::Node &form) {
 
     // `(tok "text" specified line)` when the dump carries lines; the IR
     // round-trip dump does not, and then the default stands.
-    if (wrapper.items.size() > 3) {
+    if (wrapper.items.size() > 3 && token.specified) {
+        // An unspecified token has the default `IrTokenInfo()` span
+        // (`lineStart == INT_MAX`), which is what keeps it from lowering a
+        // summary's line; only a specified token carries a source position.
         token.lineStart = token.lineEnd = std::atoi(wrapper.items[3].atom.c_str());
     }
 
@@ -275,20 +278,37 @@ static IrNode *buildNode(const sx::Node &form) {
 static IrValue *buildValue(const sx::Node &form) {
     const std::string &head = form.head();
 
+    // `(int 42)` or, when the dump carries lines, `(int (tok "42" 1 15) 42)`.
+    // The token matters: `IrValueConstant`'s constructor registers it, so the
+    // literal's line is folded into every enclosing summary token, which is
+    // where error locations come from.
+    const bool constantsCarryTokens =
+        form.items.size() > 2 && form.items[1].isList;
+    const int constantBase = constantsCarryTokens ? 2 : 1;
+    const int constantLine = constantsCarryTokens ? buildToken(form.items[1]).lineStart : 1;
+
     if (head == "int") {
-        return new IrValueInt(IrTokenInfo_int(std::stoi(form.items[1].atom), 1, 1, 1, 1));
+        return new IrValueInt(
+            IrTokenInfo_int(std::stoi(form.items[constantBase].atom),
+                constantLine, constantLine, 1, 1));
     }
 
     if (head == "float") {
-        return new IrValueFloat(IrTokenInfo_float(std::stod(form.items[1].atom), 1, 1, 1, 1));
+        return new IrValueFloat(
+            IrTokenInfo_float(std::stod(form.items[constantBase].atom),
+                constantLine, constantLine, 1, 1));
     }
 
     if (head == "bool") {
-        return new IrValueBool(IrTokenInfo_bool(form.flag(1), 1, 1, 1, 1));
+        return new IrValueBool(
+            IrTokenInfo_bool(form.items[constantBase].atom == "1",
+                constantLine, constantLine, 1, 1));
     }
 
     if (head == "str") {
-        return new IrValueString(IrTokenInfo_string(form.items[1].atom, 1, 1, 1, 1));
+        return new IrValueString(
+            IrTokenInfo_string(form.items[constantBase].atom,
+                constantLine, constantLine, 1, 1));
     }
 
     if (head == "label") {
