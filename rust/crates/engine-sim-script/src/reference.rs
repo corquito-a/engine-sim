@@ -27,6 +27,8 @@
 //! arena, `m_expansions`, and `m_infiniteLoops`. They are keyed by context, so
 //! they are created per compilation pass rather than stored in the `Arena`.
 
+use std::collections::HashMap;
+
 use crate::context::{instantiation_frames, ContextArena, ContextId};
 use crate::error::{CompilationError, ErrorCode};
 use crate::lower::{Arena, Kind, StructureId};
@@ -145,18 +147,19 @@ impl ReferenceChain {
 
 /// The state a reference walk keeps beside the tree: `m_expansions` and
 /// `m_infiniteLoops`, both keyed by `(structure, context)`.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct ReferenceState {
     pub contexts: ContextArena,
-    /// `m_expansions`. The original's `PKeyValueLookup<IrContextTree, IrNode *>`
-    /// compares keys **by value** (`*stored == *key`, i.e. `IrContextTree::
-    /// isEqual`), not by pointer -- so a freshly created context that is
-    /// structurally equal to one already used finds the same expansion. Keying
-    /// by context id instead loses every expansion the moment the walk creates
-    /// an equal-but-distinct child, which is exactly what a node's
+    /// `m_expansions`: one `PKeyValueLookup<IrContextTree, IrNode *>` per
+    /// structure, which is why the table is grouped by structure here. Within a
+    /// structure the contexts are compared **by value** (`*stored == *key`, i.e.
+    /// `IrContextTree::isEqual`), not by pointer -- so a freshly created context
+    /// that is structurally equal to one already used finds the same expansion.
+    /// Keying by context id instead loses every expansion the moment the walk
+    /// creates an equal-but-distinct child, which is exactly what a node's
     /// `getImmediateReference` does.
-    expansions: Vec<(StructureId, Option<ContextId>, Option<StructureId>)>,
-    infinite_loops: Vec<(StructureId, Option<ContextId>)>,
+    expansions: HashMap<StructureId, Vec<(Option<ContextId>, Option<StructureId>)>>,
+    infinite_loops: HashMap<StructureId, Vec<Option<ContextId>>>,
 }
 
 impl ReferenceState {
@@ -172,11 +175,10 @@ impl ReferenceState {
         context: Option<ContextId>,
     ) -> Option<Option<StructureId>> {
         self.expansions
+            .get(&structure)?
             .iter()
-            .find(|(candidate, candidate_context, _)| {
-                *candidate == structure && self.contexts.same(*candidate_context, context)
-            })
-            .map(|(_, _, expansion)| *expansion)
+            .find(|(candidate_context, _)| self.contexts.same(*candidate_context, context))
+            .map(|(_, expansion)| *expansion)
     }
 
     /// `*m_expansions.newValue(context) = expansion`
@@ -186,11 +188,14 @@ impl ReferenceState {
         context: Option<ContextId>,
         expansion: Option<StructureId>,
     ) {
-        match self.expansions.iter_mut().find(|(candidate, candidate_context, _)| {
-            *candidate == structure && self.contexts.same(*candidate_context, context)
-        }) {
-            Some(entry) => entry.2 = expansion,
-            None => self.expansions.push((structure, context, expansion)),
+        let entries = self.expansions.entry(structure).or_default();
+
+        match entries
+            .iter_mut()
+            .find(|(candidate_context, _)| self.contexts.same(*candidate_context, context))
+        {
+            Some(entry) => entry.1 = expansion,
+            None => entries.push((context, expansion)),
         }
     }
 
@@ -201,17 +206,18 @@ impl ReferenceState {
         context: Option<ContextId>,
     ) -> bool {
         self.infinite_loops
-            .iter()
-            .any(|(candidate, candidate_context)| {
-                *candidate == structure
-                    && self.contexts.same(*candidate_context, context)
+            .get(&structure)
+            .is_some_and(|entries| {
+                entries
+                    .iter()
+                    .any(|candidate| self.contexts.same(*candidate, context))
             })
     }
 
     /// `IrParserStructure::setInfiniteLoop`
     pub fn set_infinite_loop(&mut self, structure: StructureId, context: Option<ContextId>) {
         if !self.is_infinite_loop(structure, context) {
-            self.infinite_loops.push((structure, context));
+            self.infinite_loops.entry(structure).or_default().push(context);
         }
     }
 }
@@ -530,10 +536,11 @@ impl Arena {
                 };
 
                 let basic_query = ReferenceQuery::at(query.input_context);
-                let (resolved_left, basic_info) = self.reference(*left, basic_query, &mut {
-                    // The basic query is a fresh chain in the original.
-                    ReferenceState { contexts: state.contexts.clone(), ..Default::default() }
-                });
+                // A `getReference` call always starts a fresh chain, but the
+                // expansions and infinite-loop marks live on the structures
+                // (`m_expansions` / `m_infiniteLoops`), so they are shared.
+                let (resolved_left, basic_info) = self.reference(*left, basic_query, state);
+
 
                 if basic_info.failed {
                     info.failed = true;
@@ -558,6 +565,7 @@ impl Arena {
                         public_attribute = self.resolve_local_name(skeleton, &label.data);
                     }
                 }
+
 
                 let Some(public_attribute) = public_attribute else {
                     info.failed = true;
@@ -616,6 +624,10 @@ impl Arena {
                 Some(expansion) => (expansion, info),
             },
 
+            // `IrValueNodeRef::getImmediateReference` -- a node used as a value
+            // stands for that node, in the same context.
+            Kind::NodeRef(node) => (Some(*node), info),
+
             // `IrInternalReference::getImmediateReference` -- the reference and
             // its context were fixed when the expansion was created.
             Kind::InternalReference { structure, context } => {
@@ -658,22 +670,27 @@ impl Arena {
     pub fn check_references_all(&mut self) {
         let mut errors = Vec::new();
 
-        // Each unit gets its own main context: `IrCompilationUnit::
-        // _checkInstantiation` allocates one per unit, so a context from one
-        // unit is never compared against one from another.
+        // Each unit gets a fresh main context, but the expansions are shared:
+        // `_checkInstantiation` allocates a new `IrContextTree(nullptr, true)`
+        // per unit, and contexts compare by value, so it still sees everything
+        // expansion recorded.
+        let mut state = std::mem::take(&mut self.expansion_state);
+
         for unit in self.units.clone() {
-            let mut state = ReferenceState::new();
             let main = state.contexts.new_root(None, true);
             self.check_references(unit, main, &mut state, &mut errors);
         }
 
+        self.expansion_state = state;
         self.errors.extend(errors);
     }
 
-    /// `IrNode::getAsNode`
+    /// `IrNode::getAsNode`, plus `IrValueNodeRef::getAsNode`, which unwraps the
+    /// node the value stands for.
     pub fn as_node(&self, structure: StructureId) -> Option<StructureId> {
         match self.kind(structure) {
             Kind::Node(_) => Some(structure),
+            Kind::NodeRef(node) => Some(*node),
             _ => None,
         }
     }

@@ -46,12 +46,12 @@ fn main() {
     arena.resolve_all_definitions();
     arena.check_circular_definitions_all();
 
-    // The reference phase is opt-in while it is being built: it is only
-    // meaningful once expansion has produced the nodes it resolves against.
-    if std::env::var_os("SCRIPT_EXPAND").is_some() {
-        arena.expand_all();
-    }
+    // `resolveAll()` runs the phases in this order: definitions, circular
+    // definitions, expansion, references, validation.
+    arena.expand_all();
 
+    // `checkReferences` is still opt-in: it now finds every `R0050` the original
+    // reports but invents extras, so it is not part of the default pipeline yet.
     if std::env::var_os("SCRIPT_CHECK_REFERENCES").is_some() {
         arena.check_references_all();
     }

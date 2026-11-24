@@ -552,6 +552,10 @@ negative result: it says the machinery is structurally right (R0061 matches
 line-for-line, most R0050/R0060 land on the right line) and that the *only*
 thing between it and the gate is expansion, not more reference logic.
 
+*(Expansion did land; the numbers moved to `MATCH 50` with 19 over-reported
+`R0050`s. See "What is left" at the end of this document for the current state
+and the next cause.)*
+
 ---
 
 ## The language rules are generated, not transcribed
@@ -571,13 +575,16 @@ builtin-node table uses, and the reason `--check` has a second caller in CI.
 
 Two details of the lookup that the table has to respect:
 `resolveOperatorBuiltinType` returns `""` when *either* operand type is null
-(unlike `checkConversion`, which returns false), and the probe is not
-reversible, so `float * int` and `int * float` are different questions -- the
-es rules answer the first and not the second.
+(unlike `checkConversion`, which returns false), and the lookup **is**
+reversible: `OperatorMapping::operator==` falls back to comparing
+`leftType`/`rightType` swapped (`include/language_rules.h:54-75`), and
+`reversible` defaults to `true` with neither ruleset ever passing a fourth
+initialiser. So `int + float` matches the registered `Add(Float, Int)` rule.
+Getting that wrong is not academic: it is one of the causes below.
 
 ---
 
-## Expansion: implemented, measured, not yet faithful
+## Expansion: the first reading, and why it was wrong
 
 `expansion.rs` reproduces both entry points (`expand()` with its per-structure
 flag, `expand(context)` with its `m_expansions` memo), the unit's and the node's
@@ -585,68 +592,109 @@ flag, `expand(context)` with its `m_expansions` memo), the unit's and the node's
 nodes, interface nodes for untyped ports, conversion nodes, and unary/binary
 operation nodes whose inputs are `IrInternalReference`s.
 
-Behind `SCRIPT_EXPAND=1`, because the result is not yet right:
+The first measurement, behind `SCRIPT_EXPAND=1`, was `MATCH 62` against `63` for
+the pipeline without it, so it changed nothing but the `E0010` line numbers, and
+the reading at the time was that the report condition
+(`touchedMainContext || emptyContext`) and the dead-end rule
+(`isFixedType`/`isStaticType`) were being resolved the wrong way round in places.
 
-| | off | expand | expand + references |
-|---|---|---|---|
-| MATCH | 63 | 62 | 43 |
-| `E0010` missing | 9 | 9 | 9 |
+That reading was wrong. Both conditions were already right; what was wrong was
+the *inputs* they were given. The cause turned out to be a set of small,
+independent divergences, each of which made an operand type unknown or a
+reference spuriously failed -- and each of which was found by shrinking a
+failing fixture to five lines rather than by reading the fixtures.
 
-Two symptoms, and they point the same way:
-
-* `general_syntax_test_1.mr` -- the original reports `R0050,18` (an undefined
-  label in an operand) and no operator error; the port reports `E0010,18`
-  twice. So the port reaches the rule lookup in a context the original does not.
-* the nine fixtures that *should* produce `E0010` produce nothing, so in the
-  contexts that matter the port bails out one step too early.
-
-That is the same pair of conditions read in opposite directions:
-`touchedMainContext || emptyContext` gates the report, and
-`isFixedType`/`isStaticType` decides whether a dead end is fatal. A useful
-sub-observation while chasing it: the unit's `_expand()` -- all components
-against a unit main context -- is what expands an instance's attributes and
-therefore its literals, and leaving it out made every literal lookup fail in the
-unit context (`[literal] __piranha__literal_int ... context=6` but a lookup at
-context 0). The remaining work is to get those conditions right, not to add
-machinery.
+A sub-observation from that phase is still worth keeping: the unit's `_expand()`
+-- all components against a unit main context -- is what expands an instance's
+attributes and therefore its literals, so leaving it out makes every literal
+lookup fail in the unit context.
 
 ---
 
-## Two real bugs behind the expansion mismatch
+## Four causes behind the `E0010` family, and expansion becomes the pipeline
 
-The "two judgement calls, wrong in opposite directions" reading was wrong. The
-symptoms had two concrete causes, both found by shrinking the question to a
-five-line script instead of chasing the failing fixtures.
+`E0010` (invalid operand types) was the whole of the expansion mismatch: nine
+fixtures in which the original reports it and the port does not, and a handful
+where the port reports it twice where the original reports `R0050`. Four
+independent causes, each a faithful-looking simplification of the original:
 
-**`m_expansions` is keyed by context *value*.** `PKeyValueLookup<IrContextTree,
-IrNode *>` compares keys with `*stored == *key`, i.e. `IrContextTree::isEqual`,
-not by pointer. The port had keyed the map by context id, so the moment a walk
-created an equal-but-distinct child -- which is exactly what a node's
-`getImmediateReference` does on every call -- every expansion recorded under the
-original context became invisible. That single difference accounted for all nine
-missing `E0010`s: operands never had a type because their literal expansions
-could not be found.
+1. **`m_expansions` is keyed by context *value*.** `PKeyValueLookup<IrContextTree,
+   IrNode *>` compares keys with `*stored == *key`, i.e. `IrContextTree::isEqual`,
+   not by pointer. The port keyed the map by context id, so the moment a walk
+   created an equal-but-distinct child -- which is exactly what a node's
+   `getImmediateReference` does on every call -- every expansion recorded under
+   the original context became invisible, and operands had no type.
 
-**`resolveChannelType` is per ruleset.** The port had one hand-written table of
-`__engine_sim__*` builtins, so under the fixtures' rules `__piranha__literal_int`
-had no channel type at all -- again "operand type unknown" -- and conversely the
-engine's own scripts were fine. Both tables are now generated from the two
-`registerBuiltinType` bodies (27 engine-sim, 10 piranha) and checked by the same
-independent re-parse as the operator tables.
+2. **`resolveChannelType` is per ruleset.** The port had one hand-written table
+   of `__engine_sim__*` builtins, so under the fixtures' rules
+   `__piranha__literal_int` had no channel type at all. Both tables are now
+   generated from the two `registerBuiltinType` bodies (27 engine-sim, 10
+   piranha), checked by the same independent re-parse, and the hand-written
+   duplicate is gone -- one source of truth, not two.
 
-Measured after both fixes:
+3. **The operator lookup is reversible** (see above). `5 + 5.0` is an
+   `Int + Float` query, the piranha rules only register `Add(Float, Int)`, and
+   the original resolves it by comparing the operands swapped. Without that the
+   port reported `E0010` on `operator_test_2.mr`, which the original accepts.
 
-| | off | expand | expand + references |
+4. **`IrAttributeDefinition` makes every port public.** Both its constructors
+   call `setVisibility(IrVisibility::Public)`; `IrParserStructure`'s own default
+   is private. The port left ports at the default, so any `a.b` through a typed
+   input port failed as `AccessingInternalMember` before the operator could even
+   ask for a rule -- the operand type was never computed.
+
+Two more, found on the way, that were not about types at all:
+
+* **`IrValueNodeRef` has an immediate reference.** `getImmediateReference`
+  returns the node the value stands for (`include/ir_value_constant.h:205`), and
+  `getAsNode` unwraps it too. The port treated it as having none, which turned an
+  `Int + Float` into a silent dead end.
+* **A nested `getReference` shares the expansions.** The dot operator's basic
+  query starts a fresh *chain*, but the port had also given it a fresh
+  `ReferenceState`, i.e. empty expansions -- so `a.b` inside a definition could
+  not see the interface node expansion of `a`. The `ReferenceState` is now a
+  field on the `Arena`, shared by every phase, because in the original
+  `m_expansions` lives on the structures.
+
+The last one also fixed a gate's runtime: grouping the expansions per structure
+(as the original's per-structure maps do) turned an O(n²) scan into a lookup, and
+`tests/error_tests.rs` -- which now expands, because `resolveAll` does -- went
+from 551 s to 19 s.
+
+**Expansion is on by default now.** Measured, on top of the merge of #13:
+
+| | default | expand (new default) | + reference phase |
 |---|---|---|---|
-| MATCH | 63 | 59 | 43 |
-| `E0010` missing | 9 | 5 | 5 |
+| MATCH | 63 | **69** | 50 |
+| DIFF | 31 | **25** | 44 |
+| `E0010` | 9 | **0** | 0 |
 
-The five-line probes (`take(2 + "x")`, `take(2 + q)`, `take(2 + 3)`) all match
-the original now. What is left in the six remaining `E0010` fixtures is
-different in kind: `operator_test_6.mr` expects `E0010,9` *then* `E0010,5`, and
-the port reports the first, then a spurious `R0061,8` and no second -- so an
-untyped input port (`input input1: 5;`) is resolving through the reference phase
-where the original treats its operand types as unknown.
+The promotion was justified the only way it can be: `expand` fixed five fixtures
+and regressed none (`operator_test_2.mr` was the one regression until the
+reversibility bug was fixed, and it is gone).
 
-The lesson worth keeping: the failing fixture mixed four questions at once, and
-the five-line probes answered them one at a time in minutes.
+## What is left: the reference phase, and why it stays opt-in
+
+`checkReferences` (`_checkInstantiation`) now finds every `R0050` the original
+reports but **over-reports** `R0050` on 19 fixtures, so it stays behind
+`SCRIPT_CHECK_REFERENCES=1`:
+
+| | without | with |
+|---|---|---|
+| MATCH | 69 | 50 |
+| `R0050` missing | 18 | 1 |
+| `R0060` missing | 19 | 6 |
+| `R0080` missing | 3 | 1 |
+
+Sharing the expansions between phases cut the over-reporting roughly in half
+(`R0060` 14 -> 6, `R0080` 3 -> 1); the rest is a resolution question, not a
+reporting one: a label inside a definition resolves through the scope chain in
+the original and does not in the port, which is why
+`std::vector(vector.w, vector.z, ...)` yields four invented `R0050`s in
+`general_syntax_test_8.mr`. That is the next piece of work, and it is the same
+shape as this one: shrink a fixture to the smallest script that resolves in the
+original and not in the port, then fix the model.
+
+The lesson that keeps repeating: the failing fixture mixes several questions at
+once. Five-line probes answer them one at a time in minutes, and every one of the
+causes above was found that way -- not by reading the fixtures that failed.

@@ -15,46 +15,6 @@
 use crate::ir::{BinOp, UnOp};
 use crate::language_rules::LiteralKind;
 
-/// `LanguageRules::resolveChannelType`
-pub fn builtin_channel_type(builtin_name: &str) -> Option<&'static str> {
-    BUILTIN_CHANNEL_TYPES
-        .iter()
-        .find(|(name, _)| *name == builtin_name)
-        .map(|(_, channel_type)| *channel_type)
-}
-
-/// Every `registerBuiltinType` call in `scripting/src/language_rules.cpp` that
-/// supplies a channel type, in registration order.
-pub const BUILTIN_CHANNEL_TYPES: &[(&str, &str)] = &[
-    ("__engine_sim__float", "FloatNodeType"),
-    ("__engine_sim__int", "IntNodeType"),
-    ("__engine_sim__bool", "BoolNodeType"),
-    ("__engine_sim__string", "StringNodeType"),
-    ("__engine_sim__engine_channel", "EngineChannel"),
-    ("__engine_sim__crankshaft_channel", "CrankshaftChannel"),
-    ("__engine_sim__rod_journal_channel", "RodJournalChannel"),
-    ("__engine_sim__connecting_rod_channel", "ConnectingRodChannel"),
-    ("__engine_sim__piston_channel", "PistonChannel"),
-    ("__engine_sim__cylinder_bank_channel", "CylinderBankChannel"),
-    ("__engine_sim__function_channel", "FunctionChannel"),
-    ("__engine_sim__cylinder_head_channel", "CylinderHeadChannel"),
-    ("__engine_sim__camshaft_channel", "CamshaftChannel"),
-    ("__engine_sim__intake_channel", "IntakeChannel"),
-    ("__engine_sim__exhaust_system_channel", "ExhaustSystemChannel"),
-    ("__engine_sim__ignition_module_channel", "IgnitionModuleChannel"),
-    ("__engine_sim__ignition_wire_channel", "IgnitionWireChannel"),
-    ("__engine_sim__fuel_channel", "FuelChannel"),
-    ("__engine_sim__impulse_response_channel", "ImpulseResponseChannel"),
-    ("__engine_sim__valvetrain_channel", "ValvetrainChannel"),
-    ("__engine_sim__vehicle_channel", "VehicleChannel"),
-    ("__engine_sim__transmission_channel", "TransmissionChannel"),
-    ("__engine_sim__throttle_channel", "ThrottleChannel"),
-    ("__engine_sim__literal_float", "FloatNodeType"),
-    ("__engine_sim__literal_string", "StringNodeType"),
-    ("__engine_sim__literal_int", "IntNodeType"),
-    ("__engine_sim__literal_bool", "BoolNodeType"),
-];
-
 /// Every name `registerBuiltinType` registers, whether or not it carries a
 /// channel type -- this is what `LanguageRules::checkBuiltinType` tests, and
 /// therefore what decides `UndefinedBuiltinType` (`V0070`).
@@ -246,8 +206,12 @@ impl Rules {
 
     /// `LanguageRules::resolveOperatorBuiltinType`.
     ///
-    /// A null operand type has no rule, and the lookup is not reversible: the
-    /// rule's own left/right order is what has to match.
+    /// A null operand type has no rule. Otherwise `OperatorMapping::operator==`
+    /// is used, which is *reversible*: a rule whose operands are in the other
+    /// order matches too, so `Add(Int, Float)` resolves through the registered
+    /// `Add(Float, Int)` rule. `reversible` defaults to `true`
+    /// (`include/language_rules.h:51`) and neither ruleset passes a fourth
+    /// initializer, so every rule is reversible.
     pub fn operator_builtin(
         self,
         op: BinOp,
@@ -263,7 +227,11 @@ impl Rules {
 
         table
             .iter()
-            .find(|rule| rule.op == op && rule.left == left && rule.right == right)
+            .find(|rule| {
+                rule.op == op
+                    && ((rule.left == left && rule.right == right)
+                        || (rule.left == right && rule.right == left))
+            })
             .map(|rule| rule.builtin)
     }
 
@@ -360,12 +328,36 @@ mod tests {
         }
     }
 
+    /// `OperatorMapping::operator==` is reversible, so a rule registered with
+    /// its operands in one order also matches the other order. `5 + 5.0` is an
+    /// `Int + Float`, which only `Add(Float, Int)` covers.
+    #[test]
+    fn an_operator_rule_matches_with_its_operands_reversed() {
+        let rules = Rules::Piranha;
+
+        assert_eq!(
+            rules.operator_builtin(BinOp::Add, Some("IntNodeType"), Some("FloatNodeType")),
+            Some("__piranha__float_add")
+        );
+        assert_eq!(
+            rules.operator_builtin(BinOp::Add, Some("FloatNodeType"), Some("IntNodeType")),
+            Some("__piranha__float_add")
+        );
+
+        // Reversing does not conjure a rule out of nothing.
+        assert_eq!(
+            rules.operator_builtin(BinOp::Add, Some("StringNodeType"), Some("FloatNodeType")),
+            None
+        );
+    }
+
     #[test]
     fn fundamental_channels_are_registered() {
-        assert_eq!(builtin_channel_type("__engine_sim__float"), Some("FloatNodeType"));
-        assert_eq!(builtin_channel_type("__engine_sim__literal_string"), Some("StringNodeType"));
+        let rules = Rules::EngineSim;
+        assert_eq!(rules.channel_type("__engine_sim__float"), Some("FloatNodeType"));
+        assert_eq!(rules.channel_type("__engine_sim__literal_string"), Some("StringNodeType"));
         assert_eq!(
-            builtin_channel_type("__engine_sim__exhaust_system_channel"),
+            rules.channel_type("__engine_sim__exhaust_system_channel"),
             Some("ExhaustSystemChannel")
         );
     }
@@ -373,20 +365,25 @@ mod tests {
     #[test]
     fn builtins_without_a_channel_type_have_no_entry() {
         // Registered without a `ChannelType *`, so the original reports none.
-        assert_eq!(builtin_channel_type("__engine_sim__int_to_float"), None);
-        assert_eq!(builtin_channel_type("__engine_sim__nonsense"), None);
+        let rules = Rules::EngineSim;
+        assert_eq!(rules.channel_type("__engine_sim__int_to_float"), None);
+        assert_eq!(rules.channel_type("__engine_sim__nonsense"), None);
     }
 
     #[test]
     fn the_table_matches_the_registration_count() {
-        assert_eq!(BUILTIN_CHANNEL_TYPES.len(), 27);
+        assert_eq!(crate::language_rules::ENGINE_SIM_BUILTIN_CHANNEL_TYPES.len(), 27);
         assert_eq!(BUILTIN_NODE_TYPES.len(), 80);
     }
 
     #[test]
     fn every_channel_type_belongs_to_a_registered_builtin() {
-        for (name, _) in BUILTIN_CHANNEL_TYPES {
-            assert!(is_builtin_node_type(name), "{name} is not a registered builtin");
+        for rule in crate::language_rules::ENGINE_SIM_BUILTIN_CHANNEL_TYPES {
+            assert!(
+                is_builtin_node_type(rule.builtin),
+                "{} is not a registered builtin",
+                rule.builtin
+            );
         }
     }
 

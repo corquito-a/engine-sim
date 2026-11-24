@@ -36,14 +36,13 @@ impl Arena {
     /// `IrCompilationUnit::resolveAll`'s expansion step, in the same unit order
     /// the definition resolver uses.
     pub fn expand_all(&mut self) {
-        for unit in self.units.clone().into_iter().rev() {
-            self.expand_unit(unit);
-        }
-    }
+        let mut state = std::mem::take(&mut self.expansion_state);
 
-    fn expand_unit(&mut self, unit: StructureId) {
-        let mut state = ReferenceState::new();
-        self.expand_memo(unit, &mut state);
+        for unit in self.units.clone().into_iter().rev() {
+            self.expand_memo(unit, &mut state);
+        }
+
+        self.expansion_state = state;
     }
 
     /// `IrParserStructure::expand()` -- components first, then `_expand()`.
@@ -124,7 +123,6 @@ impl Arena {
 
                 let main = state.contexts.child(context, Some(structure));
 
-
                 if let Some(definition) = data.definition {
                     self.expand_with_context(definition, main, state);
                 }
@@ -158,7 +156,6 @@ impl Arena {
 
         let (definition, _count) = self.resolve_builtin_node_definition(unit, builtin);
 
-
         let Some(definition) = definition else {
             // "TODO: raise error, literal type not defined or not available"
             return;
@@ -191,7 +188,6 @@ impl Arena {
         let Some(type_definition) = self.effective_type_definition(structure) else {
             return;
         };
-
 
         if data.direction == Direction::Output && data.default_value.is_none() {
             let expansion = self.new_interface_node(structure, Some(type_definition), true, false);
@@ -417,8 +413,6 @@ impl Arena {
             return;
         };
 
-
-
         // `.` is the reference operator: it only has to expand its left side.
         if op == crate::ir::BinOp::Dot {
             self.expand_chain(left, Some(context), state);
@@ -478,11 +472,12 @@ impl Arena {
 
         let builtin = self.rules().operator_builtin(op, left_type, right_type);
 
-
-
         let Some(builtin) = builtin else {
-            let touched_main_context = (left_info.touched_main_context && !left_info.is_fixed_type())
-                || (right_info.touched_main_context && !right_info.is_fixed_type());
+            // `isStaticType()`, not `isFixedType()`: a fixed type that had to be
+            // *resolved* still counts. The unary operator uses `isFixedType()`
+            // here -- the asymmetry is the original's, so it is kept.
+            let touched_main_context = (left_info.touched_main_context && !left_info.is_static_type())
+                || (right_info.touched_main_context && !right_info.is_static_type());
 
             if touched_main_context || empty_context {
                 let location = self.entry(structure).summary.clone();
