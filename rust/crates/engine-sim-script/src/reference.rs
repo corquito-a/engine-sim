@@ -601,6 +601,13 @@ impl Arena {
                 Some(expansion) => (expansion, info),
             },
 
+            // `IrInternalReference::getImmediateReference` -- the reference and
+            // its context were fixed when the expansion was created.
+            Kind::InternalReference { structure, context } => {
+                info.new_context = *context;
+                (Some(*structure), info)
+            }
+
             // Everything else has no immediate reference at all.
             _ => (None, info),
         }

@@ -46,9 +46,12 @@ fn main() {
     arena.resolve_all_definitions();
     arena.check_circular_definitions_all();
 
-    // The expansion phase is not ported yet, so the reference phase is opt-in
-    // while it is being built: without expansions a reference through a literal
-    // dead-ends where the original would resolve it.
+    // The reference phase is opt-in while it is being built: it is only
+    // meaningful once expansion has produced the nodes it resolves against.
+    if std::env::var_os("SCRIPT_EXPAND").is_some() {
+        arena.expand_all();
+    }
+
     if std::env::var_os("SCRIPT_CHECK_REFERENCES").is_some() {
         arena.check_references_all();
     }

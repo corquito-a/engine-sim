@@ -574,3 +574,38 @@ Two details of the lookup that the table has to respect:
 (unlike `checkConversion`, which returns false), and the probe is not
 reversible, so `float * int` and `int * float` are different questions -- the
 es rules answer the first and not the second.
+
+---
+
+## Expansion: implemented, measured, not yet faithful
+
+`expansion.rs` reproduces both entry points (`expand()` with its per-structure
+flag, `expand(context)` with its `m_expansions` memo), the unit's and the node's
+`_expand`, `expandChain`, and the five overrides that create something: literal
+nodes, interface nodes for untyped ports, conversion nodes, and unary/binary
+operation nodes whose inputs are `IrInternalReference`s.
+
+Behind `SCRIPT_EXPAND=1`, because the result is not yet right:
+
+| | off | expand | expand + references |
+|---|---|---|---|
+| MATCH | 63 | 62 | 43 |
+| `E0010` missing | 9 | 9 | 9 |
+
+Two symptoms, and they point the same way:
+
+* `general_syntax_test_1.mr` -- the original reports `R0050,18` (an undefined
+  label in an operand) and no operator error; the port reports `E0010,18`
+  twice. So the port reaches the rule lookup in a context the original does not.
+* the nine fixtures that *should* produce `E0010` produce nothing, so in the
+  contexts that matter the port bails out one step too early.
+
+That is the same pair of conditions read in opposite directions:
+`touchedMainContext || emptyContext` gates the report, and
+`isFixedType`/`isStaticType` decides whether a dead end is fatal. A useful
+sub-observation while chasing it: the unit's `_expand()` -- all components
+against a unit main context -- is what expands an instance's attributes and
+therefore its literals, and leaving it out made every literal lookup fail in the
+unit context (`[literal] __piranha__literal_int ... context=6` but a lookup at
+context 0). The remaining work is to get those conditions right, not to add
+machinery.
