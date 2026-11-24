@@ -188,8 +188,8 @@ Each milestone is independently verifiable, and M0 is what unblocks everything.
 |---|---|---|
 | M0 | ✅ | `tools/parity/stage_script_reference.sh` stages and compiles `piranha` + `es_script` (`/tmp/refscript/librefscript.a`) with the parser removed; `tools/parity/script_reference.cpp` injects the IR and drives the real pipeline |
 | M1 | ✅ | `crates/engine-sim-script` (`lexer`, `ir`, `parser`, `dump`, `resolve`), dependency-free, 27 tests |
-| M2a | ✅ | `lower` (parse tree → arena), `channel_type`, `error`; every unit of both entry points lowers and raises back field-for-field; 88 tests |
-| M2b | ◐ | `resolveName` / `resolveLocalName` (scope walk, unit symbols, node attributes, definition ports/body, the definition-local-only rule), `countSymbolIncidence` — done. `IrContextTree`, `IrReferenceChain`, `getImmediateReference`, `_resolveDefinitions` — pending |
+| M2a | ✅ | `lower` (parse tree → arena), `channel_type`, `error`; every unit of both entry points lowers and raises back field-for-field; 95 tests |
+| M2b | ◐ | done: `resolveName`/`resolveLocalName` (scope walk, unit symbols, node attributes, definition ports/body, definition-local-only), `countSymbolIncidence`, `IrContextTree` (`context.rs`: chains, `isEqual`, `isOutside`, `hasParent`, `findContext`, `getMain`/`getRoot`, `resolveDefinition`). Pending: `IrReferenceChain`/`IrReferenceQuery`/`IrReferenceInfo`, `getImmediateReference` per structure, `_resolveDefinitions` |
 | M2c | ⬜ | `_checkReferences`, `_checkTypes`, `_checkInstantiation`, `_validate`; target recorded — `script_reference --resolved` writes it, `fixtures/*.resolved` hold it |
 | M3–M5 | ⬜ | unchanged |
 

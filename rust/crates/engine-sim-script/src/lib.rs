@@ -12,6 +12,7 @@
 //! pointer-identity checks actually need.
 
 pub mod channel_type;
+pub mod context;
 pub mod dump;
 pub mod error;
 pub mod ir;
@@ -22,6 +23,7 @@ pub mod parser;
 pub mod resolve;
 
 pub use channel_type::{ChannelType, ChannelTypeRegistry};
+pub use context::{ContextArena, ContextId};
 pub use dump::{dump_unit, dump_units};
 pub use error::{CompilationError, ErrorCode, ErrorList};
 pub use ir::*;
