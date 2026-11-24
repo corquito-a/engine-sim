@@ -30,7 +30,8 @@ Motivation and estimates: [`docs/rust-port-assessment.md`](../docs/rust-port-ass
 | `script` front end (`.mr` scanner, parser, IR) | `piranha/flex-bison/*`, `include/ir_*.h` | ✅ done | IR round trip through the original piranha objects, 58 scripts |
 | `script` IR substrate (`lower` arena, `channel_type`, `error`) | `include/ir_*.h`, `channel_type`, `compilation_error` | ✅ done | every unit lowers and raises back field-for-field |
 | `script` resolution (definitions, types, attributes) | `piranha/src/ir_*.cpp` | ✅ done | 660/660 + 701/701 rows identical to the reference |
-| `script` validation / references / expansion / node graph | `piranha/src/ir_*.cpp`, `node_graph.cpp` | ⬜ | — |
+| `script` validation (reported errors) | `piranha/src/ir_*.cpp` | ✅ done | 12 negative fixtures reproduce the reference's exact code multiset |
+| `script` references / expansion / type checks / node graph | `piranha/src/ir_*.cpp`, `node_graph.cpp` | ⬜ | — |
 | `scripting/` bindings (`EngineContext` → `Engine`) | `scripting/` | ⬜ | — |
 | app shell (window/render/UI/audio out) | `delta-studio` | ⬜ | — |
 
@@ -102,7 +103,7 @@ present.
 ```bash
 cd rust
 cargo build --all-targets     # no warnings
-cargo test                    # 16 unit + 13 gas + 4 end-to-end + 75 script = 108 tests
+cargo test                    # 16 unit + 13 gas + 4 end-to-end + 82 script = 115 tests
 cargo test --release
 ./tools/parity/run_core_parity.sh 200000   # 8 964 002 bit-identical checkpoints
 ```
@@ -125,6 +126,7 @@ PARITY_DYNO=1 ./tools/parity/run_core_parity.sh 20000   # same, dyno hold engage
 ./tools/parity/run_script_parity.sh           # .mr front end: 58 scripts + one live engine
 RECORD_RESOLVED=1 ./tools/parity/run_script_parity.sh   # re-record the M2 targets
 RESOLVED_GAP=1 ./tools/parity/run_script_parity.sh      # how much of M2 is still open
+RECORD_ERRORS=1 ./tools/parity/run_script_parity.sh     # re-record the error fixtures
 
 ./tools/parity/stage_reference.sh             # first run only: builds /tmp/refcore
 ./tools/parity/stage_script_reference.sh      # first run only: builds /tmp/refscript
@@ -346,6 +348,14 @@ port types, the alias-type hop (`[::string]` resolves to `string` whose alias
 output is `string_channel`), attribute→port matching (positional and named), and
 the builtin channel-type table. `RESOLVED_GAP=1` still prints the scored diff for
 debugging.
+
+Validation has its own gate, and it needs scripts that are *wrong*:
+`tools/parity/negative/*.mr` are twelve broken scripts whose exact error-code
+multiset was recorded from `script_reference --errors` (V0030 duplicate symbols,
+V0060 duplicate definitions, V0010/V0011 input given twice — the positional form
+reports the `...Positional` code — V0040 input not connected, V0050 output with
+no definition, R0010/R0020/R0030/R0040 resolution errors).
+`tests/error_tests.rs` requires the Rust front end to reproduce them all.
 
 `channel_type.rs` is `piranha::ChannelType` (name, parent chain, byte-sum hash,
 `isCompatibleWith`) plus the registry that interns types; `error.rs` is the
