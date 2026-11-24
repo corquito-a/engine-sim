@@ -30,12 +30,25 @@ fn quote(text: &str) -> String {
     out
 }
 
-fn write_token(text: &mut String, token: &Token) {
-    text.push_str(&format!(
-        "(tok {} {})",
-        quote(&token.data),
-        if token.specified { 1 } else { 0 }
-    ));
+fn write_token(text: &mut String, lines: bool, token: &Token) {
+    if lines {
+        // The conformance harness needs `(code, line)`; the original's own test
+        // suite asserts line numbers (`findError(list, code, 18)`). Off by
+        // default so the IR round-trip grammar and its tests are unchanged.
+        text.push_str(&format!(
+            "(tok {} {} {})",
+            quote(&token.data),
+            if token.specified { 1 } else { 0 },
+            token.line
+        ));
+    }
+    else {
+        text.push_str(&format!(
+            "(tok {} {})",
+            quote(&token.data),
+            if token.specified { 1 } else { 0 }
+        ));
+    }
 }
 
 fn float(value: f64) -> String {
@@ -51,7 +64,7 @@ fn float(value: f64) -> String {
     }
 }
 
-fn write_value(text: &mut String, value: &Value) {
+fn write_value(text: &mut String, lines: bool, value: &Value) {
     match value {
         Value::Int { value } => text.push_str(&format!("(int {})", value)),
         Value::Float { value: v } => text.push_str(&format!("(float {})", float(*v))),
@@ -59,12 +72,12 @@ fn write_value(text: &mut String, value: &Value) {
         Value::Str { value } => text.push_str(&format!("(str {})", quote(value))),
         Value::Label { token: t } => {
             text.push_str("(label ");
-            write_token(text, t);
+            write_token(text, lines, t);
             text.push(')');
         }
         Value::NodeRef { node } => {
             text.push_str("(nref ");
-            write_node(text, node);
+            write_node(text, lines, node);
             text.push(')');
         }
         Value::Binary { op, left, right } => {
@@ -76,9 +89,9 @@ fn write_value(text: &mut String, value: &Value) {
                 BinOp::Div => "div",
             };
             text.push_str(&format!("(bin {} ", name));
-            write_value(text, left);
+            write_value(text, lines, left);
             text.push(' ');
-            write_value(text, right);
+            write_value(text, lines, right);
             text.push(')');
         }
         Value::Unary { op, operand } => {
@@ -89,63 +102,63 @@ fn write_value(text: &mut String, value: &Value) {
                 UnOp::Positive => "pos",
             };
             text.push_str(&format!("(un {} ", name));
-            write_value(text, operand);
+            write_value(text, lines, operand);
             text.push(')');
         }
     }
 }
 
-fn write_node(text: &mut String, node: &Node) {
+fn write_node(text: &mut String, lines: bool, node: &Node) {
     text.push_str("(node (type ");
-    write_token(text, &node.type_name);
+    write_token(text, lines, &node.type_name);
     text.push_str(") (ns ");
-    write_token(text, &node.library);
+    write_token(text, lines, &node.library);
     text.push_str(") (name ");
-    write_token(text, &node.name);
+    write_token(text, lines, &node.name);
     text.push(')');
 
     text.push_str(" (attrs");
     for attribute in &node.attributes {
         text.push_str(" (attr ");
-        write_token(text, &attribute.name);
+        write_token(text, lines, &attribute.name);
         text.push(' ');
-        write_value(text, &attribute.value);
+        write_value(text, lines, &attribute.value);
         text.push(')');
     }
     text.push_str("))");
 }
 
-fn write_port(text: &mut String, port: &AttributeDefinition) {
+fn write_port(text: &mut String, lines: bool, port: &AttributeDefinition) {
     text.push_str(&format!("(port (dir {}) (name ", port.direction.as_str()));
-    write_token(text, &port.name);
+    write_token(text, lines, &port.name);
     text.push_str(&format!(") (alias {})", if port.is_alias { 1 } else { 0 }));
 
     if port.is_alias {
         text.push_str(" (alias_tok ");
-        write_token(text, &port.alias_token);
+        write_token(text, lines, &port.alias_token);
         text.push(')');
     }
 
     if let Some((library, type_name)) = &port.type_info {
         text.push_str(" (type (ns ");
-        write_token(text, library);
+        write_token(text, lines, library);
         text.push_str(") (nm ");
-        write_token(text, type_name);
+        write_token(text, lines, type_name);
         text.push_str("))");
     }
 
     if let Some(default) = &port.default_value {
         text.push_str(" (default ");
-        write_value(text, default);
+        write_value(text, lines, default);
         text.push(')');
     }
 
     text.push(')');
 }
 
-fn write_definition(text: &mut String, definition: &NodeDefinition, is_auto: bool) {
+fn write_definition(text: &mut String, lines: bool, definition: &NodeDefinition, is_auto: bool) {
     text.push_str("(def (name ");
-    write_token(text, &definition.name);
+    write_token(text, lines, &definition.name);
     text.push_str(&format!(
         ") (inline {}) (vis {}) (auto {})",
         if definition.is_inline { 1 } else { 0 },
@@ -155,20 +168,20 @@ fn write_definition(text: &mut String, definition: &NodeDefinition, is_auto: boo
 
     if definition.defines_builtin {
         text.push_str(" (builtin ");
-        write_token(text, &definition.builtin_name);
+        write_token(text, lines, &definition.builtin_name);
         text.push(')');
     }
 
     if let Some(scope) = &definition.scope_token {
         text.push_str(" (scope ");
-        write_token(text, scope);
+        write_token(text, lines, scope);
         text.push(')');
     }
 
     text.push_str(" (ports");
     for port in &definition.ports {
         text.push(' ');
-        write_port(text, port);
+        write_port(text, lines, port);
     }
     text.push(')');
 
@@ -176,7 +189,7 @@ fn write_definition(text: &mut String, definition: &NodeDefinition, is_auto: boo
         text.push_str(" (body");
         for node in body {
             text.push(' ');
-            write_node(text, node);
+            write_node(text, lines, node);
         }
         text.push(')');
     }
@@ -184,24 +197,24 @@ fn write_definition(text: &mut String, definition: &NodeDefinition, is_auto: boo
     text.push(')');
 }
 
-fn write_import(text: &mut String, import: &ImportStatement) {
+fn write_import(text: &mut String, lines: bool, import: &ImportStatement) {
     text.push_str(&format!("(import (vis {}) (lib ", import.visibility.as_str()));
-    write_token(text, &import.lib_name);
+    write_token(text, lines, &import.lib_name);
     text.push(')');
     if let Some(short_name) = &import.short_name {
         text.push_str(" (short ");
-        write_token(text, short_name);
+        write_token(text, lines, short_name);
         text.push(')');
     }
     text.push_str(")\n");
 }
 
-fn write_statement(text: &mut String, statement: &Statement) {
+fn write_statement(text: &mut String, lines: bool, statement: &Statement) {
     match statement {
-        Statement::Import(import) => write_import(text, import),
+        Statement::Import(import) => write_import(text, lines, import),
         Statement::Definition(definition_) => {
             text.push_str("  ");
-            write_definition(text, definition_, false);
+            write_definition(text, lines, definition_, false);
             text.push('\n');
         }
         Statement::AutoDefinition(definition_) => {
@@ -209,12 +222,12 @@ fn write_statement(text: &mut String, statement: &Statement) {
             // the instance is implied by the flag, so only the definition is
             // written here.
             text.push_str("  ");
-            write_definition(text, definition_, true);
+            write_definition(text, lines, definition_, true);
             text.push('\n');
         }
         Statement::Node(node) => {
             text.push_str("  ");
-            write_node(text, node);
+            write_node(text, lines, node);
             text.push('\n');
         }
     }
@@ -222,6 +235,11 @@ fn write_statement(text: &mut String, statement: &Statement) {
 
 /// Serialises every unit, one `(unit "path" ...)` form per file.
 pub fn dump_units(units: &[Unit]) -> String {
+    dump_units_with(units, false)
+}
+
+/// As [`dump_units`], optionally carrying token line numbers.
+pub fn dump_units_with(units: &[Unit], lines: bool) -> String {
     let mut text = String::new();
 
     for unit in units {
@@ -232,19 +250,19 @@ pub fn dump_units(units: &[Unit]) -> String {
         // actually has, and it makes the round trip through the oracle exact.
         for statement in &unit.statements {
             if let Statement::Import(_) = statement {
-                write_statement(&mut text, statement);
+                write_statement(&mut text, lines, statement);
             }
         }
 
         for statement in &unit.statements {
             if matches!(statement, Statement::Definition(_) | Statement::AutoDefinition(_)) {
-                write_statement(&mut text, statement);
+                write_statement(&mut text, lines, statement);
             }
         }
 
         for statement in &unit.statements {
             if let Statement::Node(_) = statement {
-                write_statement(&mut text, statement);
+                write_statement(&mut text, lines, statement);
             }
         }
 

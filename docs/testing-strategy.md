@@ -330,3 +330,37 @@ Deliberately excluded, with the threshold that would bring each back:
 **Working rule:** a phase is finished when `mutation_check.py` reports every
 mutation caught *or* explained (unobservable, with the shape changed so it
 cannot recur). That replaces "the tests pass" with "the tests would have failed".
+
+---
+
+## First run of Tier 1 (the original's own suite)
+
+Implemented: `stage_script_reference.sh` now stages `piranha/test/test_rules.cpp`
+(plus an empty `<gtest/gtest.h>` shim — no gtest here), the oracle takes
+`PARITY_RULES=test` to select those rules and `PARITY_LINES=1` to append the
+source line, and `ir_dump --lines` emits `(tok "text" specified line)`. The IR
+round-trip grammar is untouched: lines are opt-in on both sides.
+
+**Verified end to end.** `general_syntax_test_1.mr` → `R0050,18`, one error.
+The original's own assertion is
+`findError(errList, ErrorCode::UnresolvedReference, 18)` with
+`EXPECT_EQ(getErrorCount(), 1)`. The Rust parser, the line-carrying dump, the
+`TestRules` oracle and the `(code, line)` comparison all agree with it.
+
+Three findings, all of them the kind that only a conformance suite produces:
+
+1. **Operator errors lose their line.** `general_syntax_test_2.mr` reports
+   `E0010,0` where the suite asserts line 26. Cause: `Value::Binary`/`Unary`
+   carry no operator token, so the dump has nothing to carry a line on and the
+   harness leaves the summary token default. Fix: add the operator token to the
+   IR (parser → lower → dump → harness), then expect `E0010,26`.
+2. **A real parser divergence.** `general_syntax_test_4.mr` fails to parse in
+   Rust (`16:18: expected a value`) where the original accepts it and complains
+   at 24/26 with `UnexpectedToken`. The oracle can only run fixtures the Rust
+   parser accepts, so this is a parser bug with a ready-made fixture.
+3. **Parser-error fixtures cannot use the oracle at all** — if my parser
+   rejects the file there is no dump to rebuild. Those stay with the parser
+   tests; the conformance suite covers phases *after* the parser.
+
+Both open items are now gated by fixtures rather than by memory, which is the
+point of Tier 1: the suite is not a score, it is a to-do list with line numbers.

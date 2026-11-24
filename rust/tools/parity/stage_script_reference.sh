@@ -37,6 +37,16 @@ cp -r "$PIRANHA_SRC" "$REF_SCRIPT/dependencies/submodules/piranha"
 cp -r "$REPO_ROOT/scripting" "$REF_SCRIPT/scripting"
 ln -sfn "$REF_CORE/include" "$REF_SCRIPT/include"
 
+# The conformance suite in `piranha/test/` compiles against `TestRules`, a
+# second `LanguageRules` that registers piranha's own builtin set. It includes
+# <gtest/gtest.h> without using it, so an empty shim is enough -- no gtest in
+# this environment.
+mkdir -p "$REF_SCRIPT/dependencies/submodules/piranha/test" "$REF_SCRIPT/gtest_shim/gtest"
+cp "$PIRANHA_SRC/test/test_rules.cpp" "$PIRANHA_SRC/test/test_rules.h" \
+    "$REF_SCRIPT/dependencies/submodules/piranha/test/"
+printf '%s\n' '#ifndef PARITY_GTEST_SHIM' '#define PARITY_GTEST_SHIM' '#endif' \
+    > "$REF_SCRIPT/gtest_shim/gtest/gtest.h"
+
 echo "==> patching piranha (no arithmetic changes)"
 python3 - "$REF_SCRIPT/dependencies/submodules/piranha" "$REF_SCRIPT/scripting" <<'PY'
 import pathlib
@@ -230,6 +240,8 @@ CFLAGS=(-std=c++17 -O2 -fpermissive -D__forceinline=inline
         -I "$REF_SCRIPT/dependencies/submodules"
         -I "$REF_SCRIPT/dependencies/submodules/piranha/include"
         -I "$REF_SCRIPT/scripting/include"
+        -I "$REF_SCRIPT/dependencies/submodules/piranha/test"
+        -I "$REF_SCRIPT/gtest_shim"
         -I "$REF_CORE/include"
         -I "$REF_CORE/dependencies/submodules/simple-2d-constraint-solver/include"
         -I "$REF_CORE/dependencies/submodules/csv-io/include")
@@ -247,6 +259,10 @@ for src in "$REF_SCRIPT"/scripting/src/*.cpp; do
     base="$(basename "$src" .cpp)"
     g++ "${CFLAGS[@]}" -c "$src" -o "$REF_SCRIPT/obj/es_script_$base.o"
 done
+
+echo "==> compiling piranha test rules"
+g++ "${CFLAGS[@]}" -c "$REF_SCRIPT/dependencies/submodules/piranha/test/test_rules.cpp" \
+    -o "$REF_SCRIPT/obj/piranha_test_rules.o"
 
 echo "==> archiving"
 rm -f "$REF_SCRIPT/librefscript.a"
