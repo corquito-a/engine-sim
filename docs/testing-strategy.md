@@ -552,9 +552,10 @@ negative result: it says the machinery is structurally right (R0061 matches
 line-for-line, most R0050/R0060 land on the right line) and that the *only*
 thing between it and the gate is expansion, not more reference logic.
 
-*(Expansion and the reference phase both landed; the numbers moved to
-`MATCH 83, DIFF 11`. See "The reference phase, and the two rules that make it
-agree" at the end of this document.)*
+*(Expansion, the reference phase and the type check all landed; the numbers
+moved to `MATCH 87, DIFF 7`. See "The reference phase, and the two rules that
+make it agree" and "The type check, in three early exits" at the end of this
+document.)*
 
 ---
 
@@ -711,12 +712,70 @@ Two causes, both found by shrinking a fixture to four lines:
    `x` to the attribute and report a *circular reference* where the original
    reports an unresolved one.
 
-What is left is exactly the phases that are not ported yet -- `checkTypes`
-(`T0010`/`T0011`, four fixtures), the `validateBuiltinMappings` tail
-(`V0080`/`V0081`, one fixture), five `R0060`s where a member resolves in the
-original and not in the port, one extra `R0061`, and one fixture where the
-`R0080` cycle is detected at a different link.
+What is left after this phase was the unported `checkTypes` (`T0010`/`T0011`,
+four fixtures), which the next section closes; what remains today is the
+`validateBuiltinMappings` tail (`V0080`/`V0081`, one fixture), five `R0060`s
+where a member resolves in the original and not in the port, one extra
+`R0061`, and one fixture where the `R0080` cycle is detected at a different
+link.
 
 The lesson that keeps repeating: the failing fixture mixes several questions at
 once. Five-line probes answer them one at a time in minutes, and every cause
 above was found that way -- not by reading the fixtures that failed.
+
+## The type check, in three early exits
+
+`checkTypes` is the last phase `resolveAll` runs, and it is the whole of the
+`T0010`/`T0011` family. Ported as `types.rs`, it takes the report to
+`MATCH 87, DIFF 7`:
+
+| | + reference phase | + type check |
+|---|---|---|
+| MATCH | 83 | **87** |
+| DIFF | 11 | **7** |
+| `T0010` missing | 6 | 0 |
+| `T0011` missing | 4 | 0 |
+
+No new diffs: the four fixtures that carried them
+(`general_syntax_test_11`, `_12`, `_21a`, `_21b`) now agree line for line.
+
+The phase has two entry points and both matter. `checkTypes()` walks every
+structure and, on a *node*, re-checks that node's definition against a fresh
+main context -- that is how a definition body gets checked once per
+instantiation, with the per-structure `m_typesChecked` flag keeping it to once.
+`checkTypes(context)` walks the same tree with one context, which is how the
+unit's main context reaches a definition body at all. The unit's own
+`_checkTypes` makes one main context; a node's makes a non-main root with a
+main child focused on the node.
+
+Three early exits are what make the phase agree, and all three are copied
+verbatim rather than tidied:
+
+1. **A reference that only touched the main context** is checked against the
+   unit's context; one that did not is skipped unless the context is empty.
+   `IrAttributeDefinition::_checkTypes` has a second gate on top of it --
+   empty *and* main -- which `IrAttribute` does not have.
+2. **A static type is only interesting in an empty context.** A static type is
+   known at the definition site, so there is nothing to compare at an
+   instantiation that already resolved.
+3. **A type that is already known to be right is not a candidate.** A fixed
+   type equal to the port's type definition returns before any conversion
+   table is consulted, and so does a resolved node whose `getAliasType()`
+   equals it. Only then do the channel types get compared, and only then is
+   `checkConversion` asked.
+
+Two asymmetries are deliberate. The error token differs:
+`T0010` is reported at the *attribute*'s summary token (`IrAttribute`), while
+`T0011` is reported at the *default value*'s (`IrAttributeDefinition`), which
+is why a bad default points at the value and not at the port. And the
+`ErrorCode::IncompatibleOutputDefinitionType` branch in
+`IrAttributeDefinition::_checkTypes` is dead code -- the earlier branch already
+covers every port direction that can own a default -- so the port has no
+equivalent, with a comment saying so.
+
+The distilled unit tests in `types.rs` are worth reading for one reason: the
+`literal_int` definition is load-bearing. An integer literal only has a channel
+type to compare once `public node literal_int => __piranha__literal_int { alias
+output __out [int_channel]; }` exists, so the smallest script that reproduces
+`T0010`/`T0011` is not the obvious one. Finding that was faster by deleting
+line ranges from the fixture than by reading it.

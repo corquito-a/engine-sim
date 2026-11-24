@@ -41,8 +41,10 @@ fn codes_for(script: &Path) -> Option<Vec<String>> {
     // `IrCompilationUnit::resolveAll` expands before validating, so the
     // expansion's own errors (E0010 and friends) belong to this gate too.
     arena.expand_all();
-    // `checkInstantiation` -- the reference phase -- runs between them.
+    // `checkInstantiation` -- the reference phase -- runs between them, and
+    // `checkTypes` follows it.
     arena.check_references_all();
+    arena.check_types_all();
     arena.validate_all();
 
     let mut codes: Vec<String> = arena
