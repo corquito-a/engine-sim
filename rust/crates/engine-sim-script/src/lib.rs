@@ -11,8 +11,10 @@
 //! identity-preserving arena -- the shape piranha's in-place resolution and
 //! pointer-identity checks actually need.
 
+pub mod builtin_types;
 pub mod channel_type;
 pub mod context;
+pub mod definitions;
 pub mod dump;
 pub mod error;
 pub mod ir;
@@ -21,7 +23,9 @@ pub mod lower;
 pub mod name;
 pub mod parser;
 pub mod resolve;
+pub mod resolved;
 
+pub use builtin_types::builtin_channel_type;
 pub use channel_type::{ChannelType, ChannelTypeRegistry};
 pub use context::{ContextArena, ContextId};
 pub use dump::{dump_unit, dump_units};
@@ -30,4 +34,5 @@ pub use ir::*;
 pub use lexer::{tokenize, Kind, Literal, Scanner, Token as LexToken};
 pub use parser::{parse_unit, ParseError, Parser};
 pub use lower::{Arena, StructureId};
-pub use resolve::{load, LoadError};
+pub use resolve::{load, load_graph, LoadError, LoadedGraph};
+pub use resolved::resolved_rows;

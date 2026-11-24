@@ -1,11 +1,9 @@
-//! Emits the `--resolved` rows for a script, using only what the Rust side
-//! knows *today*.
+//! Emits the `--resolved` rows for a script.
 //!
 //! `crates/engine-sim-script/fixtures/*.resolved` hold what the original's
-//! resolution produced (see `tools/parity/script_reference.cpp --resolved`).
-//! This example prints the same rows from the lowered IR, so diffing the two
-//! shows exactly how much of M2 is still open: fields the Rust side cannot
-//! compute yet come out as `-` and show up as a difference against the fixture.
+//! resolution produced (`tools/parity/script_reference.cpp --resolved`); this
+//! prints the same rows from the Rust IR. `compare_resolved.py` scores the two,
+//! and `tests/resolved_tests.rs` requires them to be identical.
 //!
 //! Run it from the repository root:
 //!
@@ -13,35 +11,14 @@
 //! cargo run -p engine-sim-script --example resolved_dump -- es/engine_sim.mr
 //! ```
 
-use engine_sim_script::ir::Direction;
-use engine_sim_script::lower::{Arena, Kind, StructureId};
-use engine_sim_script::resolve::load;
+use engine_sim_script::lower::Arena;
+use engine_sim_script::resolve::load_graph;
+use engine_sim_script::resolved::resolved_rows;
 
 use std::path::{Path, PathBuf};
 
 fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
-}
-
-fn direction_name(direction: Direction) -> &'static str {
-    match direction {
-        Direction::Input => "input",
-        Direction::Output => "output",
-        Direction::Modify => "modify",
-        Direction::Toggle => "toggle",
-    }
-}
-
-/// A path as the fixture spells it: relative to the repository root.
-fn fixture_path(path: &str) -> String {
-    // Spell it the way the fixture does: from the library root down.
-    for marker in ["/es/", "/assets/"] {
-        if let Some(index) = path.rfind(marker) {
-            return path[index + 1..].to_string();
-        }
-    }
-
-    path.trim_start_matches('/').to_string()
 }
 
 fn main() {
@@ -55,79 +32,17 @@ fn main() {
     let library = root.join("es/");
     let library_text = library.to_string_lossy().into_owned();
 
-    let units = load(&root.join(&entry).to_string_lossy(), &[&library_text])
+    let graph = load_graph(&root.join(&entry).to_string_lossy(), &[&library_text])
         .unwrap_or_else(|error| {
             eprintln!("{}", error);
             std::process::exit(1);
         });
 
-    let arena = Arena::lower(&units);
+    let mut arena = Arena::lower(&graph.units);
+    arena.link_imports(&graph.imports);
+    arena.resolve_all_definitions();
 
-    for unit in arena.units() {
-        let Kind::Unit(data) = arena.kind(*unit) else {
-            continue;
-        };
-
-        let path = fixture_path(&data.path);
-
-        println!("U,{},{},{}", path, data.nodes.len(), data.definitions.len());
-        print_unit(&arena, &path, data);
-    }
-}
-
-fn print_unit(arena: &Arena, path: &str, data: &engine_sim_script::lower::UnitData) {
-    for (d, definition) in data.definitions.iter().enumerate() {
-        let Kind::NodeDefinition(definition_data) = arena.kind(*definition) else {
-            continue;
-        };
-
-        let ports: &[StructureId] = match arena.kind(definition_data.attributes) {
-            Kind::AttributeDefinitionList(ports) => ports,
-            _ => &[],
-        };
-
-        for (p, port) in ports.iter().enumerate() {
-            let Kind::AttributeDefinition(port_data) = arena.kind(*port) else {
-                continue;
-            };
-
-            // `typeDef` and `channelType` need `_resolveDefinitions` +
-            // `_checkTypes`, so they are the open part of M2.
-            println!(
-                "P,{},{},{},{},{},{},{},-,-",
-                path,
-                d,
-                definition_data.name.data,
-                p,
-                port_data.name.data,
-                direction_name(port_data.direction),
-                if port_data.is_alias { 1 } else { 0 }
-            );
-        }
-    }
-
-    for (n, node) in data.nodes.iter().enumerate() {
-        let Kind::Node(node_data) = arena.kind(*node) else {
-            continue;
-        };
-
-        let attributes: &[StructureId] = match arena.kind(node_data.attributes) {
-            Kind::AttributeList(attributes) => attributes,
-            _ => &[],
-        };
-
-        // The original only prints a row per *attribute*; a node with an empty
-        // attribute list contributes nothing.
-        for (a, attribute) in attributes.iter().enumerate() {
-            let Kind::Attribute(attribute_data) = arena.kind(*attribute) else {
-                continue;
-            };
-
-            // The port an attribute resolved to is `_resolveDefinitions`' job.
-            println!(
-                "A,{},{},{},{},{},-,-",
-                path, n, node_data.name.data, a, attribute_data.name.data
-            );
-        }
+    for row in resolved_rows(&arena) {
+        println!("{}", row);
     }
 }

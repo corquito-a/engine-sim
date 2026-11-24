@@ -29,7 +29,8 @@ Motivation and estimates: [`docs/rust-port-assessment.md`](../docs/rust-port-ass
 | `synth` (input resampling, impulse response, render/mix, int16 out) | `src/synthesizer.cpp` | ✅ done | bit-exact (filter harness + whole-core incl. audio) |
 | `script` front end (`.mr` scanner, parser, IR) | `piranha/flex-bison/*`, `include/ir_*.h` | ✅ done | IR round trip through the original piranha objects, 58 scripts |
 | `script` IR substrate (`lower` arena, `channel_type`, `error`) | `include/ir_*.h`, `channel_type`, `compilation_error` | ✅ done | every unit lowers and raises back field-for-field |
-| `script` resolution / validation / node graph | `piranha/src/ir_*.cpp`, `node_graph.cpp` | ⬜ | — |
+| `script` resolution (definitions, types, attributes) | `piranha/src/ir_*.cpp` | ✅ done | 660/660 + 701/701 rows identical to the reference |
+| `script` validation / references / expansion / node graph | `piranha/src/ir_*.cpp`, `node_graph.cpp` | ⬜ | — |
 | `scripting/` bindings (`EngineContext` → `Engine`) | `scripting/` | ⬜ | — |
 | app shell (window/render/UI/audio out) | `delta-studio` | ⬜ | — |
 
@@ -101,7 +102,7 @@ present.
 ```bash
 cd rust
 cargo build --all-targets     # no warnings
-cargo test                    # 16 unit + 13 gas + 4 end-to-end + 62 script = 95 tests
+cargo test                    # 16 unit + 13 gas + 4 end-to-end + 75 script = 108 tests
 cargo test --release
 ./tools/parity/run_core_parity.sh 200000   # 8 964 002 bit-identical checkpoints
 ```
@@ -337,13 +338,14 @@ type `getImmediateChannelType()` produced) and one `A,` row per unit-level
 attribute (the port it resolved to). 660 and 701 rows. Nothing compares against
 them yet — that is M2c — but they record what `resolveDefinitions` +
 `checkTypes` actually decided, which is otherwise invisible.
-`examples/resolved_dump.rs` re-emits the same rows from the lowered IR with `-`
-in the fields Rust cannot compute yet, and `compare_resolved.py` scores the two:
-**409/660 rows identical for `es/engine_sim.mr`, 448/701 for `assets/main.mr`**,
-with every remaining difference confined to `P.typeDef` (250),
-`P.channelType` (30) and the resolved port of `A` rows — i.e. exactly M2c.
-That baseline is the progress meter: it must reach 100 % with zero unexplained
-fields.
+`examples/resolved_dump.rs` emits the same rows from the lowered IR, and
+`tests/resolved_tests.rs` requires them to be **identical** to the fixture:
+660/660 for `es/engine_sim.mr`, 701/701 for `assets/main.mr`. That is the M2
+resolution gate — definition lookup (imports, visibility, `ns::name`, `::name`),
+port types, the alias-type hop (`[::string]` resolves to `string` whose alias
+output is `string_channel`), attribute→port matching (positional and named), and
+the builtin channel-type table. `RESOLVED_GAP=1` still prints the scored diff for
+debugging.
 
 `channel_type.rs` is `piranha::ChannelType` (name, parent chain, byte-sum hash,
 `isCompatibleWith`) plus the registry that interns types; `error.rs` is the
