@@ -13,6 +13,7 @@
 
 pub mod builtin_types;
 pub mod channel_type;
+pub mod circular;
 pub mod context;
 pub mod definitions;
 pub mod dump;
