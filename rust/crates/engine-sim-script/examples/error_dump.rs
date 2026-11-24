@@ -45,6 +45,14 @@ fn main() {
     arena.link_imports(&graph.imports);
     arena.resolve_all_definitions();
     arena.check_circular_definitions_all();
+
+    // The expansion phase is not ported yet, so the reference phase is opt-in
+    // while it is being built: without expansions a reference through a literal
+    // dead-ends where the original would resolve it.
+    if std::env::var_os("SCRIPT_CHECK_REFERENCES").is_some() {
+        arena.check_references_all();
+    }
+
     arena.validate_all();
 
     for error in arena.errors() {

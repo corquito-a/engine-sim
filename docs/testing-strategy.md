@@ -518,3 +518,36 @@ Both were *harness/dump* fidelity, again. The pattern is consistent enough to be
 a rule: when the reference and the port disagree only about a position, suspect
 the dump before the port -- twice now the reference's number was derived from a
 token the port had synthesised or dropped.
+
+---
+
+## The reference chain, and the measurement that says "not yet"
+
+`reference.rs` now implements `getImmediateReference`/`getReference` for labels,
+literals, attributes, ports, nodes and operators, with the chain, the
+`m_infiniteLoops` marking and the `touchedMainContext` rule that decides whether
+a failure is worth reporting at all. It is **not** wired into the pipeline: the
+pipeline order is `resolveDefinitions -> checkCircularDefinitions -> expand ->
+checkInstantiation -> checkTypes`, and expansion is what makes most references
+resolve.
+
+The measurement, with `SCRIPT_CHECK_REFERENCES=1` switching the phase on:
+
+| | ported phases only | + reference phase |
+|---|---|---|
+| MATCH | 63 | 43 |
+| R0050 missing | 18 | 1 |
+| R0061 missing | 1 | 0 |
+| R0060 missing | 19 | 12 |
+
+The reference phase finds nearly all of the original's unresolved references --
+and invents 20 fixtures' worth of its own, because a reference through a literal
+or an operator cannot resolve until `expand` has produced the node it points at:
+`(label "q")` dead-ends, the original's `q` had an expansion. The invented ones
+are `R0050`/`R0060`/`R0080` on scripts where the original reports nothing at all
+(`general_syntax_test_17`, `_25`, `_26`, `_27`, `_29`...).
+
+So the phase stays opt-in until expansion lands. This is the useful kind of
+negative result: it says the machinery is structurally right (R0061 matches
+line-for-line, most R0050/R0060 land on the right line) and that the *only*
+thing between it and the gate is expansion, not more reference logic.
