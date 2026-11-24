@@ -245,11 +245,18 @@ static IrTokenInfo_string buildToken(const sx::Node &form) {
 
     // `(tok "text" specified line)` when the dump carries lines; the IR
     // round-trip dump does not, and then the default stands.
-    if (wrapper.items.size() > 3 && token.specified) {
-        // An unspecified token has the default `IrTokenInfo()` span
-        // (`lineStart == INT_MAX`), which is what keeps it from lowering a
-        // summary's line; only a specified token carries a source position.
-        token.lineStart = token.lineEnd = std::atoi(wrapper.items[3].atom.c_str());
+    if (token.specified) {
+        // A specified token carries its source position when the dump has one.
+        if (wrapper.items.size() > 3) {
+            token.lineStart = token.lineEnd = std::atoi(wrapper.items[3].atom.c_str());
+        }
+    }
+    else {
+        // An unspecified token is `IrTokenInfo()`: a span that cannot lower any
+        // summary's line. Leaving it at the constructed (1,1) made every node's
+        // summary start on line 1 -- `[node] type='test' summary=1..2`.
+        token.lineStart = token.colStart = INT_MAX;
+        token.lineEnd = token.colEnd = -1;
     }
 
     return token;
@@ -278,7 +285,10 @@ static IrNode *buildNode(const sx::Node &form) {
         }
     }
 
-    return new IrNode(buildToken(*type), buildToken(*name), list, buildToken(*library));
+    IrNode *built = new IrNode(buildToken(*type), buildToken(*name), list, buildToken(*library));
+
+
+    return built;
 }
 
 static IrValue *buildValue(const sx::Node &form) {
