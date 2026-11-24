@@ -17,6 +17,7 @@ pub mod error;
 pub mod ir;
 pub mod lexer;
 pub mod lower;
+pub mod name;
 pub mod parser;
 pub mod resolve;
 

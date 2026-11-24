@@ -188,8 +188,8 @@ Each milestone is independently verifiable, and M0 is what unblocks everything.
 |---|---|---|
 | M0 | ✅ | `tools/parity/stage_script_reference.sh` stages and compiles `piranha` + `es_script` (`/tmp/refscript/librefscript.a`) with the parser removed; `tools/parity/script_reference.cpp` injects the IR and drives the real pipeline |
 | M1 | ✅ | `crates/engine-sim-script` (`lexer`, `ir`, `parser`, `dump`, `resolve`), dependency-free, 27 tests |
-| M2a | ✅ | `lower` (parse tree → arena), `channel_type`, `error`; every unit of both entry points lowers and raises back field-for-field; 81 tests |
-| M2b | ⬜ | `IrContextTree`, `resolveName` / `resolveLocalName`, unit-level name lookup, `IrReferenceChain` |
+| M2a | ✅ | `lower` (parse tree → arena), `channel_type`, `error`; every unit of both entry points lowers and raises back field-for-field; 88 tests |
+| M2b | ◐ | `resolveName` / `resolveLocalName` (scope walk, unit symbols, node attributes, definition ports/body, the definition-local-only rule), `countSymbolIncidence` — done. `IrContextTree`, `IrReferenceChain`, `getImmediateReference`, `_resolveDefinitions` — pending |
 | M2c | ⬜ | `_checkReferences`, `_checkTypes`, `_checkInstantiation`, `_validate`, per-attribute resolved-type dump |
 | M3–M5 | ⬜ | unchanged |
 

@@ -101,7 +101,7 @@ present.
 ```bash
 cd rust
 cargo build --all-targets     # no warnings
-cargo test                    # 16 unit + 13 gas + 4 end-to-end + 48 script = 81 tests
+cargo test                    # 16 unit + 13 gas + 4 end-to-end + 55 script = 88 tests
 cargo test --release
 ./tools/parity/run_core_parity.sh 200000   # 8 964 002 bit-identical checkpoints
 ```
@@ -296,8 +296,11 @@ the reference's audio thread, so PCM output is reproducible.
      (`src/lower.rs`: parse tree → identity-preserving arena, because piranha
      resolves in place and compares structures by identity; see
      `docs/mr-interpreter-plan.md` §8.3), as are `src/channel_type.rs` and
-     `src/error.rs`. Next: `IrContextTree` + `resolveName`/`resolveLocalName`,
-     then the reference chain, `_checkTypes` and `_validate`.
+     `src/error.rs`, and `src/name.rs` has the scope walk
+     (`resolveName`/`resolveLocalName`, including the rule that a node
+     definition resolves locally only and that a unit resolves its *nodes*, not
+     its definitions). Next: `IrContextTree` + `IrReferenceChain` +
+     `getImmediateReference`, then `_checkTypes` and `_validate`.
    * **M3 — node graph and execution** (`Node`, `NodeOutput`, `Channel`,
      `NodeProgram`, allocator, the mutation log). The original executes nodes in
      `NodeContainer` order and never calls `NodeProgram::optimize()` — the
