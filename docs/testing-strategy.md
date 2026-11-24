@@ -387,10 +387,33 @@ DIFF 54, MATCH 40, PARSE 19
 | `V0080`/`V0081` | undefined builtin input/output | 1 / 1 | `validateBuiltinMappings` (known) |
 | `E0020`, `R0061`, `V0010`, `V0011`, `V0040`, `R0020`, `R0030`, `R0040` | assorted | 1-3 each | mixed, triage per fixture |
 
-`R0010` at 29 is the surprise: resolution was thought complete (660/660 and
-701/701 resolved rows), so either the fixtures resolve through a path the corpus
-never uses, or the corpus's rows are not sensitive to it. That is exactly the
-kind of thing a conformance suite is for, and it is the first thing to look at.
+`R0010` at 29 was the surprise, and triage says it is not a port bug: the
+reference reports those on an *unspecified* token (line 2147483647) because
+`IrValueLiteral::_expand` builds an `IrLiteralNode` whose definition is looked up
+in the unit (`resolveBuiltinNodeDefinition`), and a fixture that does not define
+`__piranha__literal_*` itself makes the expansion resolve the empty type name --
+piranha's own `// TODO: raise error, literal type not defined`. Faithful
+behaviour, unreachable in the port until expansion exists.
+
+Identified by reading the stack rather than the code: instrumenting the two
+`UndefinedNodeType` sites with `backtrace` showed the caller chain
+`IrValueLiteral<...>::_expand → IrNode::_resolveDefinitions →
+resolveNodeDefinition`, with `type=''`. The same check on `es/engine_sim.mr`
+reports nothing, because the engine's own stdlib defines its literal builtins.
+
+**After excluding unspecified-token errors: `MATCH 57, DIFF 37, PARSE 19`
+(171 unspecified-token errors dropped).** Every surviving gap belongs to an
+unported phase -- `E0010` 9 and `R0080` 3 (operator expansion, `expandChain`),
+`T0010`/`T0011` 9 (`checkTypes`), `V0080`/`V0081` 2 (`validateBuiltinMappings`),
+`R0061` 1 (visibility) -- except `V0010` 3, `V0011` 1, `V0020`-class argument
+errors `R0020` 3, `R0030` 2, `R0040` 2 and `E0020` 2, which belong to phases
+that *are* ported and are therefore real bugs. That short list is the next
+work queue, and it is short enough to work through fixture by fixture.
+
+Two fidelity fixes came out of the triage. The harness now always writes
+`m_typeInfo` (`IrAttributeDefinition`'s constructor initialises only
+`m_typeDefinition`, so an untouched `m_typeInfo` is uninitialised memory). And
+the runner excludes unspecified-token errors by default, `--strict` keeps them.
 
 `PARSE` 19 is the parser's own to-do list -- files the original accepts and this
 parser rejects. They cannot use the oracle (no dump exists if the parse fails),

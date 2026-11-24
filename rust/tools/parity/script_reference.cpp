@@ -371,12 +371,22 @@ static IrAttributeDefinition *buildPort(const sx::Node &form) {
         definition->setAlias(false);
     }
 
+    // `IrAttributeDefinition`'s constructor initialises `m_typeDefinition` and
+    // nothing else, so `m_typeInfo` is uninitialised memory unless it is always
+    // written. The grammar's action writes it for every port -- a default
+    // (unspecified) token when the script wrote no `[type]` -- and a garbage
+    // `specified` bit here makes `_resolveDefinitions` look up the empty type
+    // name and report `UndefinedNodeType` for ports that have no type at all.
+    piranha::IrTokenInfoSet<std::string, 2> info;
+    info.data[0] = IrTokenInfo_string();
+    info.data[1] = IrTokenInfo_string();
+
     if (type != nullptr) {
-        piranha::IrTokenInfoSet<std::string, 2> info;
         info.data[0] = buildToken(*type->child("ns"));
         info.data[1] = buildToken(*type->child("nm"));
-        definition->setTypeInfo(info);
     }
+
+    definition->setTypeInfo(info);
 
     // `IrAttributeDefinition` leaves `m_defaultValue` (and `m_isAlias`)
     // uninitialised: the grammar's actions are what set them, so the injection
