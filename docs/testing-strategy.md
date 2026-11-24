@@ -415,9 +415,10 @@ Two fidelity fixes came out of the triage. The harness now always writes
 `m_typeDefinition`, so an untouched `m_typeInfo` is uninitialised memory). And
 the runner excludes unspecified-token errors by default, `--strict` keeps them.
 
-`PARSE` 19 is the parser's own to-do list -- files the original accepts and this
-parser rejects. They cannot use the oracle (no dump exists if the parse fails),
-so they are compared against the gtest literals directly.
+`PARSE` 19 was listed here as the parser's own to-do list. That reading turned
+out to be wrong -- they are fixtures whose expected errors come from bison, or
+whose import target is not in the repository, and neither is a port defect. "The
+19 fixtures that cannot be scored" below has the audit.
 
 Supporting pieces added with the report: `Rules::{EngineSim, Piranha}` on the
 arena (selectable through `error_dump --rules=piranha`), the 37-name
@@ -892,11 +893,8 @@ That closes the language gate:
 | `R0061` extra | 1 | 0 |
 | `R0080` on the wrong link | 1 | 0 |
 
-Zero diffs is not "the port is finished": 19 fixtures still fail to parse, and
-171 are excluded because their expected errors come from the reference's own
-unspecified tokens (`--strict` scores those, and it is the honest measure of
-what is left: `DIFF 29`). What has changed is that every fixture the port *can*
-be compared on now agrees, so the next gap is parser coverage, not the IR
+Zero diffs is not "the port is finished": 19 fixtures still fail to parse and
+171 are excluded, and the next two sections say why neither is a gap in the IR
 pipeline.
 
 **The lesson this unit adds:** a phase with two entry points looks almost right
@@ -904,3 +902,55 @@ with one of them, because the second only changes *which context* a structure is
 checked in. The missing part is invisible in the port and obvious in the
 original's `resolveAll` -- so when a family of errors is missing, the first
 question is now "which traversal am I not doing", not "which rule is wrong".
+
+## The 19 fixtures that cannot be scored
+
+`MATCH 94, DIFF 0` counts the fixtures the harness *can* compare. The rest used
+to be one undifferentiated `PARSE 19` bucket, which read like a to-do list. It
+is not: the runner now splits it, and both halves are unscorable for reasons
+outside the port.
+
+**15 fixtures whose expected behaviour is the original parser's error output.**
+Every one of them is deliberately malformed, and the code that would report the
+error is bison -- absent from this environment, which is why the reference build
+takes its IR from the Rust dump in the first place. There is nothing to compare
+against, so the port cannot be right or wrong here:
+
+| fixture | what makes it unparseable |
+|---|---|
+| `general_syntax_test_13` | `output formatted: "…" + some_input` with no `;` |
+| `general_syntax_test_19`, `_20` | `input data` with no `;` |
+| `general_syntax_test_21`, `_22` | `input data: 10` with no `;` |
+| `general_syntax_test_3` | `0test` is not a literal; a trailing comma in `print_header(),` |
+| `general_syntax_test_4` | `input inputs;;` and another `0test` |
+| `construction-tests/demo.mr` | a nested call left unclosed (`FrameAdder fa(`) |
+| `construction-tests/test.mr`, `stress-testing/stress_test_1_isolated.mr` | `default output …` -- there is no `default` keyword in `specification.y` |
+| `construction-tests/nested_conversions.1.mr` | `public literal float => …` and `public float >> int => …` -- stale syntax, neither `literal` nor a `>>` conversion rule exists |
+| `full-error-testing/test_case_1`, `_2`, `_3` | `###` and `$` are unidentified tokens, which is the point of the test |
+| `syntax_error.mr` | an unclosed `(` |
+
+The gtests confirm this reading: `GeneralSyntaxTest_13` expects exactly one
+`UnexpectedToken` on line 8 -- the line of the missing `;` -- and `_19`/`_21`
+expect one on lines 7 and 17. The port rejects the same line, so it agrees with
+the original as far as it can. What it cannot do is what bison does next:
+`_19` and `_21` go on to expect `IncompatibleType`/`InvalidOperandTypes` errors
+further down the file, which means the original *recovered* from the syntax
+error and compiled the rest. A hand-written recursive-descent parser that stops
+at the first error has no such list to produce, which is why these fixtures can
+never be scored rather than merely being unscored today.
+
+**4 fixtures whose import target is not in the repository.** `missing_dependency.mr`
+imports `fake_file.mr` on purpose (its gtest expects a single `IO0010`), and the
+three `single_node_*.mr` fixtures import `test.sdl.mr`, which is not in the
+piranha submodule at all -- not a file this checkout is missing, a file upstream
+never shipped. Both sides abort on a failed import: the port in `resolve::load_graph`, and
+the oracle in its own `analyze`, which needs the imported unit to exist. So
+reporting `IO0010` in the port would change nothing here.
+
+That is the honest shape of the gate: **94 scored, 0 diffs, 19 unscorable, 171
+excluded.** The last bucket is the interesting one for what to do next -- those
+fixtures' expected errors sit on an *unspecified* token (`line 2147483647`),
+which the reference produces when expanding a literal whose builtin node the
+fixture does not define. `--strict` counts them (`DIFF 29`, all `R0010`), and
+reproducing them means reproducing the original's `// TODO: raise error, literal
+type not defined` path, not a port fix.

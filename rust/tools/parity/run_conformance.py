@@ -4,7 +4,11 @@
 For every `.mr` fixture under `piranha/test/sdl/`:
 
   1. dump it with line numbers (`ir_dump --lines`) -- if the Rust parser rejects
-     the file, the case is reported as PARSE and nothing else can run;
+     the file, nothing else can run, and the case is counted as `PARSE-SYNTAX`
+     (a deliberately malformed fixture whose expected errors come from the
+     original's bison parser, which is not available here) or `PARSE-IMPORT`
+     (it imports a file that is not in the repository, which the oracle cannot
+     resolve either). Neither is a gap in the port; `--summary` says which;
   2. ask the reference for its `code,line` list
      (`PARITY_RULES=test PARITY_LINES=1 script_reference --errors`);
   3. ask the port for its own (`error_dump --rules=piranha`);
@@ -24,10 +28,15 @@ The expected lists come from the reference, not from the gtest literals: the
 `findError(list, code, line)` assertions in `piranha/test/*.cpp` cover only a
 subset of each case, and the reference is the same code those tests run.
 
-A non-zero exit means at least one fixture disagrees -- which is the intended
-state while phases are still unported. Read it as a to-do list, not a verdict:
-`--summary` groups the differences by error code so the report says *which*
-phase each one belongs to.
+A non-zero exit means at least one fixture disagrees. `--summary` groups the
+differences by error code so the report says *which* phase each one belongs to:
+
+    MATCH            the port and the reference agree, code for code
+    DIFF             they disagree -- the only bucket that is a port defect
+    UNSPECIFIED      excluded: the reference's expected errors sit on an
+                     unspecified token (see above), or the fixture has none
+    PARSE-SYNTAX     the fixture does not parse, and no oracle exists for it
+    PARSE-IMPORT     the fixture's import target is missing from the repository
 """
 
 import argparse
@@ -87,7 +96,15 @@ def main():
         dumped = run([str(IR_DUMP), "--lines", str(fixture)])
         if dumped.returncode != 0:
             first = (dumped.stderr.strip().splitlines() or ["parse failed"])[0]
-            status["PARSE"] += 1
+
+            # Two reasons a fixture cannot be scored, and neither is a gap in the
+            # port: the fixture is deliberately malformed (the original reports it
+            # through its bison parser, which is not available here), or it
+            # imports a file that is not in the repository -- the oracle aborts on
+            # that too. `--summary` counts them apart so the tally says which.
+            missing_import = "cannot resolve import" in first
+            status["PARSE-IMPORT" if missing_import else "PARSE-SYNTAX"] += 1
+
             rows.append((relative, "PARSE", first, "", ""))
             continue
 
@@ -122,6 +139,17 @@ def main():
             print(f"{row[0]}: {row[1]} {row[2]}")
 
     print("\n" + ", ".join(f"{name} {count}" for name, count in sorted(status.items())))
+
+    if args.summary:
+        unscorable = status["PARSE-SYNTAX"] + status["PARSE-IMPORT"]
+        if unscorable:
+            print(
+                f"\nunscorable: {unscorable} fixtures -- "
+                f"{status['PARSE-SYNTAX']} are malformed or use syntax this grammar "
+                "does not have (the original reports them through bison, which is "
+                f"not in this environment), {status['PARSE-IMPORT']} import a file "
+                "that is not in the repository (the oracle aborts on it too)"
+            )
 
     if args.summary and missing:
         print("\nmissing from the port, by code:")
