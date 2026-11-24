@@ -222,3 +222,28 @@ fn this_attributes_are_preserved() {
 
     assert_eq!(this_count, 1, "the member's `this` attribute survives lowering");
 }
+
+/// Both `IrAttributeDefinition` constructors call
+/// `setVisibility(IrVisibility::Public)`; `IrParserStructure`'s own default is
+/// private, so a port that inherits it makes `a.b` fail with
+/// `AccessingInternalMember`.
+#[test]
+fn ports_allow_external_access() {
+    let unit = parse_unit("test.mr", "node n { output o [float]: 1.0; }\n").expect("parses");
+    let mut arena = Arena::default();
+    let unit = arena.lower_unit(&unit);
+
+    let Kind::Unit(data) = arena.kind(unit) else {
+        panic!("not a unit");
+    };
+    let definition = data.definitions[0];
+    let Kind::NodeDefinition(definition) = arena.kind(definition) else {
+        panic!("not a definition");
+    };
+    let Kind::AttributeDefinitionList(ports) = arena.kind(definition.attributes) else {
+        panic!("not a port list");
+    };
+
+    let port = ports[0];
+    assert!(arena.allows_external_access(port), "a port is public");
+}

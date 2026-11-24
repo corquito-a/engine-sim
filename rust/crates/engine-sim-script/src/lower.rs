@@ -216,6 +216,11 @@ pub struct Arena {
     /// Which `LanguageRules` to consult. Defaults to the engine's own, which is
     /// what every existing caller wants.
     pub(crate) rules: crate::builtin_types::Rules,
+    /// `m_expansions` and `m_infiniteLoops`. The original keeps both on each
+    /// structure, so they outlive one phase: expansion writes them and
+    /// `checkReferences` reads them back. They therefore live here rather than
+    /// in a `ReferenceState` local to a single walk.
+    pub(crate) expansion_state: crate::reference::ReferenceState,
 }
 
 impl Arena {
@@ -654,6 +659,11 @@ impl Arena {
                 owner: None,
             }),
         );
+
+        // Both `IrAttributeDefinition` constructors call
+        // `setVisibility(IrVisibility::Public)`, so `allowsExternalAccess()` is
+        // true for every port -- `IrParserStructure`'s own default is private.
+        self.entries[id].visibility = Visibility::Public;
 
         let default_value = port.default_value.as_ref().map(|value| self.lower_value(id, value));
 
