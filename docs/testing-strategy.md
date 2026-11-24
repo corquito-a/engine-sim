@@ -478,3 +478,43 @@ different code.
 
 Note what this is *not*: none of the fourteen is a wrong diagnostic. Chasing the
 codes would have found nothing; comparing lines is what exposed it.
+
+---
+
+## Ported-phase residuals: zero
+
+After two more fixes the conformance report no longer contains a *single*
+difference in a phase that is ported. `MATCH 63, DIFF 31`:
+
+| Code | Missing | Phase |
+|---|---|---|
+| `R0060` undefined member | 19 | reference chain |
+| `R0050` unresolved reference | 18 | reference chain |
+| `E0010` invalid operand types | 9 | operator expansion |
+| `T0010` / `T0011` type errors | 6 / 4 | `checkTypes` |
+| `R0080` circular reference | 3 | `expandChain` loop guard |
+| `V0080` / `V0081` builtin in/output | 1 / 1 | `validateBuiltinMappings` |
+| `R0061` internal member | 1 | reference chain |
+
+Everything left is work, not drift. The two fixes:
+
+1. **A token child is a `(tok ...)` form, not just any list.**
+   `(un neg (float 459.67))` was read as "the operand is a token", so the value
+   base moved to 3 and `--ir` read past the end of the form: a segfault for the
+   whole corpus. Found only because the staged reference was rebuilt from
+   scratch; the previous green run had used a cached binary. The parity script's
+   rebuild is now part of every run here, and `--keep` is what leaves the oracle
+   around for the conformance runner.
+
+2. **A specified token with no position is `INT_MAX`, not 0.**
+   `IrNode::setThis` synthesises `IrAttribute(IrTokenInfo_string("this"), ...)`,
+   whose span ctor leaves the base default -- `lineStart == INT_MAX`. The dump
+   wrote 0 for the same token, so the oracle folded a line 0 into every summary
+   it touched and reported `V0010,0` where the port said 12. The dump now writes
+   `INT_MAX` for a specified token with no position, and an unspecified token
+   maps back to the default span on the way in.
+
+Both were *harness/dump* fidelity, again. The pattern is consistent enough to be
+a rule: when the reference and the port disagree only about a position, suspect
+the dump before the port -- twice now the reference's number was derived from a
+token the port had synthesised or dropped.

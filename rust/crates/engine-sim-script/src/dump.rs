@@ -35,11 +35,18 @@ fn write_token(text: &mut String, lines: bool, token: &Token) {
         // The conformance harness needs `(code, line)`; the original's own test
         // suite asserts line numbers (`findError(list, code, 18)`). Off by
         // default so the IR round-trip grammar and its tests are unchanged.
+        // A specified token with no source position (`Token::new`, e.g. the
+        // `this` attribute `IrNode::setThis` synthesises) is `IrTokenInfo()`
+        // in the original: `lineStart == INT_MAX`, a span that cannot lower a
+        // summary's line. Writing 0 here would make the oracle fold a line 0
+        // into every summary it touches.
+        let line = if token.line == 0 { i32::MAX as u32 } else { token.line };
+
         text.push_str(&format!(
             "(tok {} {} {})",
             quote(&token.data),
             if token.specified { 1 } else { 0 },
-            token.line
+            line
         ));
     }
     else {

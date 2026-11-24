@@ -230,6 +230,12 @@ using piranha::IrVisibility;
 
 /// Builds a token from either a bare `(tok "data" 0|1)` or a field wrapper that
 /// contains one (`(name (tok "data" 0|1))`).
+/// True when the form is a `(tok ...)` wrapper rather than a nested value.
+static bool isToken(const sx::Node &form) {
+    return form.isList && !form.items.empty() && !form.items[0].isList
+        && form.items[0].atom == "tok";
+}
+
 static IrTokenInfo_string buildToken(const sx::Node &form) {
     const sx::Node &wrapper = form.head() == "tok" ? form : form.items[1];
 
@@ -239,11 +245,18 @@ static IrTokenInfo_string buildToken(const sx::Node &form) {
 
     // `(tok "text" specified line)` when the dump carries lines; the IR
     // round-trip dump does not, and then the default stands.
-    if (wrapper.items.size() > 3 && token.specified) {
-        // An unspecified token has the default `IrTokenInfo()` span
-        // (`lineStart == INT_MAX`), which is what keeps it from lowering a
-        // summary's line; only a specified token carries a source position.
-        token.lineStart = token.lineEnd = std::atoi(wrapper.items[3].atom.c_str());
+    if (token.specified) {
+        // A specified token carries its source position when the dump has one.
+        if (wrapper.items.size() > 3) {
+            token.lineStart = token.lineEnd = std::atoi(wrapper.items[3].atom.c_str());
+        }
+    }
+    else {
+        // An unspecified token is `IrTokenInfo()`: a span that cannot lower any
+        // summary's line. Leaving it at the constructed (1,1) made every node's
+        // summary start on line 1 -- `[node] type='test' summary=1..2`.
+        token.lineStart = token.colStart = INT_MAX;
+        token.lineEnd = token.colEnd = -1;
     }
 
     return token;
@@ -272,7 +285,10 @@ static IrNode *buildNode(const sx::Node &form) {
         }
     }
 
-    return new IrNode(buildToken(*type), buildToken(*name), list, buildToken(*library));
+    IrNode *built = new IrNode(buildToken(*type), buildToken(*name), list, buildToken(*library));
+
+
+    return built;
 }
 
 static IrValue *buildValue(const sx::Node &form) {
@@ -283,7 +299,7 @@ static IrValue *buildValue(const sx::Node &form) {
     // literal's line is folded into every enclosing summary token, which is
     // where error locations come from.
     const bool constantsCarryTokens =
-        form.items.size() > 2 && form.items[1].isList;
+        form.items.size() > 2 && isToken(form.items[1]);
     const int constantBase = constantsCarryTokens ? 2 : 1;
     const int constantLine = constantsCarryTokens ? buildToken(form.items[1]).lineStart : 1;
 
@@ -324,7 +340,7 @@ static IrValue *buildValue(const sx::Node &form) {
     if (head == "bin") {
         const std::string &op = form.items[1].atom;
         // `(bin add (tok "+" 1 26) l r)` when the dump carries lines.
-        const bool withToken = form.items[2].isList;
+        const bool withToken = isToken(form.items[2]);
         const int valueBase = withToken ? 3 : 2;
         IrBinaryOperator::Operator operation = IrBinaryOperator::Operator::Dot;
         if (op == "add") operation = IrBinaryOperator::Operator::Add;
@@ -344,7 +360,7 @@ static IrValue *buildValue(const sx::Node &form) {
 
     if (head == "un") {
         const std::string &op = form.items[1].atom;
-        const bool withToken = form.items[2].isList;
+        const bool withToken = isToken(form.items[2]);
         const int valueBase = withToken ? 3 : 2;
         IrUnaryOperator::Operator operation = IrUnaryOperator::Operator::Default;
         if (op == "neg") operation = IrUnaryOperator::Operator::NumericNegate;
