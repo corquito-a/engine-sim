@@ -389,19 +389,15 @@ static IrAttributeDefinition *buildPort(const sx::Node &form) {
     const sx::Node *type = form.child("type");
     const sx::Node *defaultValue = form.child("default");
 
-    const std::string &dir = direction->items[1].atom;
+    // The direction keyword is a registered token of the definition, so it both
+    // receives `V0090`/`V0100` and moves the definition's summary token.
+    IrTokenInfo_string directionToken = buildToken(*direction);
+    const std::string &dir = directionToken.data;
+
     IrAttributeDefinition::Direction resolved = IrAttributeDefinition::Direction::Input;
     if (dir == "output") resolved = IrAttributeDefinition::Direction::Output;
     else if (dir == "modify") resolved = IrAttributeDefinition::Direction::Modify;
     else if (dir == "toggle") resolved = IrAttributeDefinition::Direction::Toggle;
-
-    // The dump carries the direction's *spelling* but not its position, so this
-    // token is synthesized and every error reported at it lands on line 1. The
-    // original's parser would point it at the keyword; `V0090`/`V0100` are the
-    // only codes reported through this token, and the recorded fixtures compare
-    // codes rather than lines, so nothing is lost -- but a line-sensitive test
-    // of those two codes would see the difference.
-    IrTokenInfo_string directionToken(dir, 1, 1, 1, 1);
 
     auto *definition =
         new IrAttributeDefinition(directionToken, buildToken(*name), resolved);
@@ -650,11 +646,14 @@ static void printValue(std::string &out, IrValue *value) {
 }
 
 static void printPort(std::string &out, IrAttributeDefinition *port) {
+    const std::string direction =
+        port->getDirection() == IrAttributeDefinition::Direction::Input ? "input"
+        : port->getDirection() == IrAttributeDefinition::Direction::Output ? "output"
+        : port->getDirection() == IrAttributeDefinition::Direction::Modify ? "modify"
+        : "toggle";
+
     out += "(port (dir ";
-    out += port->getDirection() == IrAttributeDefinition::Direction::Input ? "input"
-         : port->getDirection() == IrAttributeDefinition::Direction::Output ? "output"
-         : port->getDirection() == IrAttributeDefinition::Direction::Modify ? "modify"
-         : "toggle";
+    printToken(out, *port->getDirectionToken(), direction);
     out += ") (name ";
     printToken(out, *port->getNameToken(), port->getName());
     out += port->isAlias() ? ") (alias 1)" : ") (alias 0)";

@@ -9,9 +9,7 @@
 //!
 //! `validateBuiltinMappings` is covered too (`V0070`-`V0110`): the builtin
 //! reference nodes' ports are recorded in `tools/parity/builtin_ports.txt`, so
-//! the port comparison runs against the same data the original does. Those
-//! codes are compared as codes only -- the dump does not carry the direction
-//! token's position, so `V0090`/`V0100` land on line 1 in the oracle.
+//! the port comparison runs against the same data the original does.
 
 use engine_sim_script::lower::Arena;
 use engine_sim_script::resolve::load_graph;

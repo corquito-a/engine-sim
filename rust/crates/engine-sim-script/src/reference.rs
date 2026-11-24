@@ -640,10 +640,15 @@ impl Arena {
         }
     }
 
-    /// `IrParserStructure::checkReferences`
+    /// `IrParserStructure::checkReferences`, with `IrNode`'s override.
     ///
-    /// Every component is checked with the same input context, so a name that is
-    /// only visible through a sibling is still reported where it was written.
+    /// The base version checks every component with the same input context, so a
+    /// name that is only visible through a sibling is still reported where it
+    /// was written. A node adds two things: it refuses to descend into a context
+    /// that already has it (`findContext`), and it gives its *definition* a
+    /// child context of its own -- the node is what the definition body's names
+    /// resolve through, so the body has to see it. The node's own attributes are
+    /// still checked against the input context, not the child.
     pub fn check_references(
         &mut self,
         structure: StructureId,
@@ -651,6 +656,24 @@ impl Arena {
         state: &mut ReferenceState,
         errors: &mut Vec<CompilationError>,
     ) {
+        if let Kind::Node(data) = self.kind(structure).clone() {
+            if state.contexts.find_context(context, structure).is_some() {
+                return;
+            }
+
+            let this_context = state.contexts.child(context, Some(structure));
+
+            for child in self.components(structure) {
+                self.check_references(child, context, state, errors);
+            }
+
+            if let Some(definition) = data.definition {
+                self.check_references(definition, this_context, state, errors);
+            }
+
+            return;
+        }
+
         for child in self.components(structure) {
             self.check_references(child, context, state, errors);
         }
@@ -665,20 +688,67 @@ impl Arena {
         }
     }
 
-    /// `IrCompilationUnit::_checkInstantiation`: unit components checked against
-    /// a fresh main context.
+    /// `IrParserStructure::checkInstantiation` and its two overrides: the
+    /// second half of the reference phase.
+    ///
+    /// Components are visited first and the structure is checked last, once
+    /// (`m_instantiationChecked`). A unit then walks its components against one
+    /// fresh main context; a *node* checks its definition with a main child of a
+    /// fresh non-main root, so the definition body is resolved with that node as
+    /// its focus. That is what makes `some_input.a` inside a definition an
+    /// unresolved member at an instantiation site but not in the definition's
+    /// own (empty) context -- the shape behind the `R0060` family.
+    fn check_instantiation(
+        &mut self,
+        structure: StructureId,
+        state: &mut ReferenceState,
+        errors: &mut Vec<CompilationError>,
+    ) {
+        if self.entry(structure).flags.instantiation_checked {
+            return;
+        }
+
+        self.entry_mut(structure).flags.instantiation_checked = true;
+
+        for child in self.components(structure) {
+            self.check_instantiation(child, state, errors);
+        }
+
+        match self.kind(structure).clone() {
+            Kind::Unit(_) => {
+                let main = state.contexts.new_root(None, true);
+
+                for child in self.components(structure) {
+                    self.check_references(child, main, state, errors);
+                }
+            }
+
+            Kind::Node(data) => {
+                let parent = state.contexts.new_root(None, false);
+                let main = state.contexts.main_child(parent, Some(structure));
+
+                if let Some(definition) = data.definition {
+                    self.check_references(definition, main, state, errors);
+                }
+            }
+
+            _ => {}
+        }
+    }
+
+    /// `IrCompilationUnit::resolveAll`'s `checkInstantiation()` step.
+    ///
+    /// Each unit gets a fresh main context, but the expansions are shared:
+    /// `_checkInstantiation` allocates a new `IrContextTree(nullptr, true)` per
+    /// unit, and contexts compare by value, so it still sees everything
+    /// expansion recorded.
     pub fn check_references_all(&mut self) {
         let mut errors = Vec::new();
 
-        // Each unit gets a fresh main context, but the expansions are shared:
-        // `_checkInstantiation` allocates a new `IrContextTree(nullptr, true)`
-        // per unit, and contexts compare by value, so it still sees everything
-        // expansion recorded.
         let mut state = std::mem::take(&mut self.expansion_state);
 
         for unit in self.units.clone() {
-            let main = state.contexts.new_root(None, true);
-            self.check_references(unit, main, &mut state, &mut errors);
+            self.check_instantiation(unit, &mut state, &mut errors);
         }
 
         self.expansion_state = state;
@@ -780,6 +850,42 @@ mod tests {
         assert_eq!(reference, Some(data.value));
         assert_eq!(info.new_context, Some(main));
         assert!(!info.failed);
+    }
+
+    /// The phase's second entry point. `IrNode::_checkInstantiation` checks a
+    /// node's definition with a main *child* context focused on the instance, so
+    /// `some_input.a` -- a member of a port, reached through the instance -- is
+    /// an undefined member there. The definition's own context is empty, and in
+    /// it the same expression is silent, which is why the definition-level walk
+    /// alone reports nothing.
+    #[test]
+    fn a_definition_body_is_checked_again_for_each_instantiation() {
+        // The piranha rules are needed for the literal's builtin node, and
+        // `literal_int` is what gives `5` a channel type to expand through.
+        let source = "\
+node confusion {
+    input some_input;
+    output test: some_input.a;
+}
+confusion p(5)
+public node int_channel => __piranha__int {}
+public node literal_int => __piranha__literal_int {
+    alias output __out [int_channel];
+}
+";
+
+        let unit = parse_unit("test.mr", source).expect("parses");
+        let mut arena = Arena::default();
+        arena.set_rules(crate::Rules::Piranha);
+        arena.lower_unit(&unit);
+        arena.link_imports(&[Vec::new()]);
+        arena.resolve_all_definitions();
+        arena.check_circular_definitions_all();
+        arena.expand_all();
+        arena.check_references_all();
+
+        let codes: Vec<&str> = arena.errors().iter().map(|error| error.code.code).collect();
+        assert_eq!(codes, ["0060"]);
     }
 
     #[test]

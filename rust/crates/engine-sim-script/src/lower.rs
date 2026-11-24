@@ -694,6 +694,13 @@ impl Arena {
                 }),
             );
 
+            // Every `IrAttribute` constructor calls
+            // `setVisibility(IrVisibility::Public)`, so an instance's attributes
+            // are externally accessible (`myNode.A`) even though
+            // `IrParserStructure`'s own default is private. Body *nodes* keep
+            // that private default, which is what `R0061` reports.
+            self.entries[id].visibility = Visibility::Public;
+
             let value = self.lower_value(id, &attribute.value);
             let Kind::Attribute(data) = &mut self.entries[id].kind else {
                 unreachable!()
