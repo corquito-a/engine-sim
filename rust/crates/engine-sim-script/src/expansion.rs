@@ -25,7 +25,6 @@
 //! which is what lets an operator see the type of its operands before the
 //! reference phase has run.
 
-use crate::builtin_types::builtin_channel_type;
 use crate::context::ContextId;
 use crate::error::{CompilationError, ErrorCode};
 use crate::ir::{Direction, Token};
@@ -125,6 +124,7 @@ impl Arena {
 
                 let main = state.contexts.child(context, Some(structure));
 
+
                 if let Some(definition) = data.definition {
                     self.expand_with_context(definition, main, state);
                 }
@@ -191,6 +191,7 @@ impl Arena {
         let Some(type_definition) = self.effective_type_definition(structure) else {
             return;
         };
+
 
         if data.direction == Direction::Output && data.default_value.is_none() {
             let expansion = self.new_interface_node(structure, Some(type_definition), true, false);
@@ -417,6 +418,7 @@ impl Arena {
         };
 
 
+
         // `.` is the reference operator: it only has to expand its left side.
         if op == crate::ir::BinOp::Dot {
             self.expand_chain(left, Some(context), state);
@@ -437,7 +439,9 @@ impl Arena {
         let left_reference = if left_info.reached_dead_end {
             match left_info.fixed_type {
                 Some(fixed) => Some(fixed),
-                None => return,
+                None => {
+                    return;
+                }
             }
         } else {
             left_reference
@@ -454,7 +458,9 @@ impl Arena {
         let right_reference = if right_info.reached_dead_end {
             match right_info.fixed_type {
                 Some(fixed) => Some(fixed),
-                None => return,
+                None => {
+                    return;
+                }
             }
         } else {
             right_reference
@@ -471,6 +477,7 @@ impl Arena {
         };
 
         let builtin = self.rules().operator_builtin(op, left_type, right_type);
+
 
 
         let Some(builtin) = builtin else {
@@ -584,7 +591,7 @@ impl Arena {
         };
 
         if data.defines_builtin {
-            if let Some(channel_type) = builtin_channel_type(&data.builtin_name.data) {
+            if let Some(channel_type) = self.rules().channel_type(&data.builtin_name.data) {
                 return Some(channel_type);
             }
         }

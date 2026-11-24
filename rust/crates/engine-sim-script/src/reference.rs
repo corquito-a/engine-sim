@@ -27,8 +27,6 @@
 //! arena, `m_expansions`, and `m_infiniteLoops`. They are keyed by context, so
 //! they are created per compilation pass rather than stored in the `Arena`.
 
-use std::collections::BTreeMap;
-
 use crate::context::{instantiation_frames, ContextArena, ContextId};
 use crate::error::{CompilationError, ErrorCode};
 use crate::lower::{Arena, Kind, StructureId};
@@ -150,7 +148,14 @@ impl ReferenceChain {
 #[derive(Debug, Default)]
 pub struct ReferenceState {
     pub contexts: ContextArena,
-    expansions: BTreeMap<(StructureId, Option<ContextId>), Option<StructureId>>,
+    /// `m_expansions`. The original's `PKeyValueLookup<IrContextTree, IrNode *>`
+    /// compares keys **by value** (`*stored == *key`, i.e. `IrContextTree::
+    /// isEqual`), not by pointer -- so a freshly created context that is
+    /// structurally equal to one already used finds the same expansion. Keying
+    /// by context id instead loses every expansion the moment the walk creates
+    /// an equal-but-distinct child, which is exactly what a node's
+    /// `getImmediateReference` does.
+    expansions: Vec<(StructureId, Option<ContextId>, Option<StructureId>)>,
     infinite_loops: Vec<(StructureId, Option<ContextId>)>,
 }
 
@@ -166,7 +171,12 @@ impl ReferenceState {
         structure: StructureId,
         context: Option<ContextId>,
     ) -> Option<Option<StructureId>> {
-        self.expansions.get(&(structure, context)).copied()
+        self.expansions
+            .iter()
+            .find(|(candidate, candidate_context, _)| {
+                *candidate == structure && self.contexts.same(*candidate_context, context)
+            })
+            .map(|(_, _, expansion)| *expansion)
     }
 
     /// `*m_expansions.newValue(context) = expansion`
@@ -176,7 +186,12 @@ impl ReferenceState {
         context: Option<ContextId>,
         expansion: Option<StructureId>,
     ) {
-        self.expansions.insert((structure, context), expansion);
+        match self.expansions.iter_mut().find(|(candidate, candidate_context, _)| {
+            *candidate == structure && self.contexts.same(*candidate_context, context)
+        }) {
+            Some(entry) => entry.2 = expansion,
+            None => self.expansions.push((structure, context, expansion)),
+        }
     }
 
     /// `IrParserStructure::isInfiniteLoop`
@@ -886,6 +901,40 @@ mod tests {
             info.new_context.map(|context| state.contexts.context(context)),
             Some(Some(instance))
         );
+    }
+
+    #[test]
+    fn an_expansion_is_found_from_an_equal_context_not_just_the_same_one() {
+        // `PKeyValueLookup<IrContextTree, IrNode *>` compares keys by value, so
+        // a freshly created child that is structurally equal to one already
+        // used finds the same expansion. Keying by context id lost every
+        // expansion a node's `getImmediateReference` created a new child for.
+        let (arena, unit_id) = resolved("node d {\n  input i;\n}\nd p(1)\n");
+
+        let literal = {
+            let node = first_node(&arena, unit_id);
+            let attribute = attributes(&arena, node)[0];
+            let Kind::Attribute(data) = arena.kind(attribute) else {
+                panic!("not an attribute");
+            };
+            data.value
+        };
+
+        let mut state = ReferenceState::new();
+        let main = state.contexts.new_root(None, true);
+        let twin = state.contexts.new_root(None, true);
+
+        state.set_expansion(literal, Some(main), None);
+        assert_eq!(state.expansion(literal, Some(twin)), Some(None));
+
+        state.set_expansion(literal, Some(main), Some(7));
+        assert_eq!(state.expansion(literal, Some(twin)), Some(Some(7)));
+        // A context that actually names a structure is a different context --
+        // note that two *empty* contexts compare equal in the original, which is
+        // why this has to use a non-empty one.
+        let node = first_node(&arena, unit_id);
+        let other = state.contexts.child(twin, Some(node));
+        assert_eq!(state.expansion(literal, Some(other)), None);
     }
 
     #[test]

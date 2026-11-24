@@ -609,3 +609,44 @@ therefore its literals, and leaving it out made every literal lookup fail in the
 unit context (`[literal] __piranha__literal_int ... context=6` but a lookup at
 context 0). The remaining work is to get those conditions right, not to add
 machinery.
+
+---
+
+## Two real bugs behind the expansion mismatch
+
+The "two judgement calls, wrong in opposite directions" reading was wrong. The
+symptoms had two concrete causes, both found by shrinking the question to a
+five-line script instead of chasing the failing fixtures.
+
+**`m_expansions` is keyed by context *value*.** `PKeyValueLookup<IrContextTree,
+IrNode *>` compares keys with `*stored == *key`, i.e. `IrContextTree::isEqual`,
+not by pointer. The port had keyed the map by context id, so the moment a walk
+created an equal-but-distinct child -- which is exactly what a node's
+`getImmediateReference` does on every call -- every expansion recorded under the
+original context became invisible. That single difference accounted for all nine
+missing `E0010`s: operands never had a type because their literal expansions
+could not be found.
+
+**`resolveChannelType` is per ruleset.** The port had one hand-written table of
+`__engine_sim__*` builtins, so under the fixtures' rules `__piranha__literal_int`
+had no channel type at all -- again "operand type unknown" -- and conversely the
+engine's own scripts were fine. Both tables are now generated from the two
+`registerBuiltinType` bodies (27 engine-sim, 10 piranha) and checked by the same
+independent re-parse as the operator tables.
+
+Measured after both fixes:
+
+| | off | expand | expand + references |
+|---|---|---|---|
+| MATCH | 63 | 59 | 43 |
+| `E0010` missing | 9 | 5 | 5 |
+
+The five-line probes (`take(2 + "x")`, `take(2 + q)`, `take(2 + 3)`) all match
+the original now. What is left in the six remaining `E0010` fixtures is
+different in kind: `operator_test_6.mr` expects `E0010,9` *then* `E0010,5`, and
+the port reports the first, then a spurious `R0061,8` and no second -- so an
+untyped input port (`input input1: 5;`) is resolving through the reference phase
+where the original treats its operand types as unknown.
+
+The lesson worth keeping: the failing fixture mixed four questions at once, and
+the five-line probes answered them one at a time in minutes.

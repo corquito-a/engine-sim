@@ -351,7 +351,7 @@ impl Arena {
             return None;
         }
 
-        crate::builtin_types::builtin_channel_type(&data.builtin_name.data)
+        self.rules().channel_type(&data.builtin_name.data)
     }
 
     /// The name of a resolved port (`IrAttributeDefinition::getName`), for
