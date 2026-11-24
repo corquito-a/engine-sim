@@ -190,7 +190,7 @@ Each milestone is independently verifiable, and M0 is what unblocks everything.
 | M1 | ✅ | `crates/engine-sim-script` (`lexer`, `ir`, `parser`, `dump`, `resolve`), dependency-free, 27 tests |
 | M2a | ✅ | `lower` (parse tree → arena), `channel_type`, `error`; every unit of both entry points lowers and raises back field-for-field; 95 tests |
 | M2b | ◐ | done: `resolveName`/`resolveLocalName` (scope walk, unit symbols, node attributes, definition ports/body, definition-local-only), `countSymbolIncidence`, `IrContextTree` (`context.rs`: chains, `isEqual`, `isOutside`, `hasParent`, `findContext`, `getMain`/`getRoot`, `resolveDefinition`). Pending: `IrReferenceChain`/`IrReferenceQuery`/`IrReferenceInfo`, `getImmediateReference` per structure, `_resolveDefinitions` |
-| M2c | ⬜ | `_checkReferences`, `_checkTypes`, `_checkInstantiation`, `_validate`; target recorded — `script_reference --resolved` writes it, `fixtures/*.resolved` hold it |
+| M2c | ⬜ | `_checkReferences`, `_checkTypes`, `_checkInstantiation`, `_validate`; target recorded (`script_reference --resolved`, `fixtures/*.resolved`) and scored (`RESOLVED_GAP=1`): 409/660 rows already identical (`es/`), 448/701 (`assets/`), the rest confined to `typeDef`/`channelType`/`resolvedPort` |
 | M3–M5 | ⬜ | unchanged |
 
 Two deviations from the plan, both forced by the missing toolchain:

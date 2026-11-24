@@ -123,6 +123,7 @@ PARITY_DYNO=1 ./tools/parity/run_core_parity.sh 20000   # same, dyno hold engage
 ./tools/parity/run_dsp_parity.sh              # every audio filter + the synthesizer
 ./tools/parity/run_script_parity.sh           # .mr front end: 58 scripts + one live engine
 RECORD_RESOLVED=1 ./tools/parity/run_script_parity.sh   # re-record the M2 targets
+RESOLVED_GAP=1 ./tools/parity/run_script_parity.sh      # how much of M2 is still open
 
 ./tools/parity/stage_reference.sh             # first run only: builds /tmp/refcore
 ./tools/parity/stage_script_reference.sh      # first run only: builds /tmp/refscript
@@ -336,6 +337,13 @@ type `getImmediateChannelType()` produced) and one `A,` row per unit-level
 attribute (the port it resolved to). 660 and 701 rows. Nothing compares against
 them yet — that is M2c — but they record what `resolveDefinitions` +
 `checkTypes` actually decided, which is otherwise invisible.
+`examples/resolved_dump.rs` re-emits the same rows from the lowered IR with `-`
+in the fields Rust cannot compute yet, and `compare_resolved.py` scores the two:
+**409/660 rows identical for `es/engine_sim.mr`, 448/701 for `assets/main.mr`**,
+with every remaining difference confined to `P.typeDef` (250),
+`P.channelType` (30) and the resolved port of `A` rows — i.e. exactly M2c.
+That baseline is the progress meter: it must reach 100 % with zero unexplained
+fields.
 
 `channel_type.rs` is `piranha::ChannelType` (name, parent chain, byte-sum hash,
 `isCompatibleWith`) plus the registry that interns types; `error.rs` is the
