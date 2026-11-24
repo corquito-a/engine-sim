@@ -552,9 +552,9 @@ negative result: it says the machinery is structurally right (R0061 matches
 line-for-line, most R0050/R0060 land on the right line) and that the *only*
 thing between it and the gate is expansion, not more reference logic.
 
-*(Expansion did land; the numbers moved to `MATCH 50` with 19 over-reported
-`R0050`s. See "What is left" at the end of this document for the current state
-and the next cause.)*
+*(Expansion and the reference phase both landed; the numbers moved to
+`MATCH 83, DIFF 11`. See "The reference phase, and the two rules that make it
+agree" at the end of this document.)*
 
 ---
 
@@ -673,36 +673,50 @@ The promotion was justified the only way it can be: `expand` fixed five fixtures
 and regressed none (`operator_test_2.mr` was the one regression until the
 reversibility bug was fixed, and it is gone).
 
-## What is left: the reference phase, and why it stays opt-in
+## The reference phase, and the two rules that make it agree
 
-`checkReferences` (`_checkInstantiation`) now finds every `R0050` the original
-reports but **over-reports** `R0050` on 19 fixtures, so it stays behind
-`SCRIPT_CHECK_REFERENCES=1`:
+`checkReferences` (`_checkInstantiation`) is now part of the pipeline too, and the
+phase went from inventing errors on 19 fixtures to `MATCH 83, DIFF 11`:
 
-| | without | with |
+| | expansion only | + reference phase |
 |---|---|---|
-| MATCH | 69 | 57 |
-| `R0050` missing | 18 | 1 |
+| MATCH | 69 | **83** |
+| DIFF | 25 | **11** |
+| `R0050` missing | 18 | 0 |
 | `R0060` missing | 19 | 5 |
 | `R0080` missing | 3 | 1 |
 
-Sharing the expansions between phases cut the over-reporting roughly in half
-(`R0060` 14 -> 6, `R0080` 3 -> 1). One more cause fell out of a five-line probe:
-**`auto node X` also instantiates a node named `X`**, before registering the
-definition (`immediate_node_definition: AUTO specific_node_definition`), and
-`IrCompilationUnit::resolveLocalName` finds *nodes*. Without the name, a
-reference to `X` from inside `X`'s own body resolved in the original and not in
-the port (`general_syntax_test_30/32/33`); with it, 44 -> 37.
+Two causes, both found by shrinking a fixture to four lines:
 
-What is left is a resolution question, not a reporting one: a label whose
-reference should succeed through the scope chain still fails in the port, which
-is why `std::vector(vector.w, vector.z, ...)` yields four invented `R0050`s in
-`general_syntax_test_8.mr`, and why some `R0050`s come out *repeated* (three
-copies on one line) -- that repetition is a clue worth following, because the
-original visits each structure once. The next piece of work is the same shape as
-this one: shrink a fixture to the smallest script that resolves in the original
-and not in the port, then fix the model.
+1. **`m_expansions` outlives the phase.** The original keeps it on the
+   structures, so `checkReferences` reads back what `expand` wrote; the port
+   created a fresh `ReferenceState` per phase. It is now an `Arena` field, and
+   the table is grouped per structure, as the original's per-structure maps are
+   (which is also what turned an O(n^2) scan into a lookup: `error_tests` went
+   from 551 s to 19 s).
+2. **`auto node X` instantiates a node named `X`** (`immediate_node_definition:
+   AUTO specific_node_definition`), before registering the definition, and
+   `IrCompilationUnit::resolveLocalName` finds *nodes*. Without the name, a
+   reference to `X` from inside `X`'s own body resolved in the original and not
+   in the port.
+3. **The dot's right operand is not a reference.**
+   `IrBinaryOperator`'s constructor calls `setCheckReferences(false)` on it --
+   "the right-hand operand will *always* be a standard label that doesn't
+   reference anything itself". Without that, every `a.b` reported a spurious
+   `R0050` on `b`, which was most of the over-reporting.
+4. **An attribute's values see the node's *scope parent*, not the node.**
+   `IrNode::setScopeParent` forwards the node's parent scope to its attribute
+   list, so the walk from a label is `label -> attribute -> attribute list ->
+   (node's parent)`. Leaving the node in that chain made `i(x: 5, y: x)` resolve
+   `x` to the attribute and report a *circular reference* where the original
+   reports an unresolved one.
+
+What is left is exactly the phases that are not ported yet -- `checkTypes`
+(`T0010`/`T0011`, four fixtures), the `validateBuiltinMappings` tail
+(`V0080`/`V0081`, one fixture), five `R0060`s where a member resolves in the
+original and not in the port, one extra `R0061`, and one fixture where the
+`R0080` cycle is detected at a different link.
 
 The lesson that keeps repeating: the failing fixture mixes several questions at
-once. Five-line probes answer them one at a time in minutes, and every one of the
-causes above was found that way -- not by reading the fixtures that failed.
+once. Five-line probes answer them one at a time in minutes, and every cause
+above was found that way -- not by reading the fixtures that failed.

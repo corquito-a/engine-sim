@@ -50,11 +50,7 @@ fn main() {
     // definitions, expansion, references, validation.
     arena.expand_all();
 
-    // `checkReferences` is still opt-in: it now finds every `R0050` the original
-    // reports but invents extras, so it is not part of the default pipeline yet.
-    if std::env::var_os("SCRIPT_CHECK_REFERENCES").is_some() {
-        arena.check_references_all();
-    }
+    arena.check_references_all();
 
     arena.validate_all();
 
