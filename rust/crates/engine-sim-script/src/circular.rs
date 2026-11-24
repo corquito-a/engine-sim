@@ -21,8 +21,8 @@
 //! * a node already present in the context chain is not descended into again,
 //!   which is what stops a cycle inside a definition that is *not* the root.
 
-use crate::context::ContextArena;
-use crate::error::{CompilationError, ErrorCode, InstantiationFrame};
+use crate::context::{instantiation_frames, ContextArena};
+use crate::error::{CompilationError, ErrorCode};
 use crate::lower::{Arena, Kind, StructureId};
 
 impl Arena {
@@ -81,7 +81,7 @@ impl Arena {
 
         if definition == Some(root) {
             let location = self.entry(structure).summary.clone();
-            let frames = instantiation_frames(contexts, context);
+            let frames = instantiation_frames(contexts, Some(context));
 
             self.errors.push(CompilationError::with_instantiation(
                 location,
@@ -103,24 +103,6 @@ impl Arena {
             self.check_circular_definitions(definition, new_context, root, contexts);
         }
     }
-}
-
-/// The context chain below `context`, oldest frame first -- the shape
-/// `es_script::Compiler::printError` prints as `While instantiating:`.
-fn instantiation_frames(contexts: &ContextArena, context: usize) -> Vec<InstantiationFrame> {
-    let mut frames = Vec::new();
-    let mut current = Some(context);
-
-    while let Some(id) = current {
-        if let Some(node) = contexts.context(id) {
-            frames.push(InstantiationFrame { node });
-        }
-
-        current = contexts.parent(id);
-    }
-
-    frames.reverse();
-    frames
 }
 
 #[cfg(test)]

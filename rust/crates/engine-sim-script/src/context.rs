@@ -228,6 +228,18 @@ impl ContextArena {
         self.context(current) == self.context(reference)
     }
 
+    /// Two context handles that may be absent. `IrReferenceChain::searchLink`
+    /// compares `Option<IrContextTree *>`: both sides are non-null in practice,
+    /// but the empty context is a value like any other and has to compare equal
+    /// to itself.
+    pub fn same(&self, left: Option<ContextId>, right: Option<ContextId>) -> bool {
+        match (left, right) {
+            (Some(left), Some(right)) => self.is_equal(left, right),
+            (None, None) => true,
+            _ => false,
+        }
+    }
+
     /// `IrContextTree::isOutside`
     pub fn is_outside(&self, id: ContextId, reference: ContextId) -> bool {
         let mut current = Some(id);
@@ -244,6 +256,32 @@ impl ContextArena {
 
         false
     }
+}
+
+
+/// The context chain below `context`, oldest frame first -- the shape
+/// `es_script::Compiler::printError` prints as `While instantiating:`.
+///
+/// Shared by every phase that attaches an instantiation to an error.
+pub fn instantiation_frames(
+    contexts: &ContextArena,
+    context: Option<ContextId>,
+) -> Vec<crate::error::InstantiationFrame> {
+    use crate::error::InstantiationFrame;
+
+    let mut frames = Vec::new();
+    let mut current = context;
+
+    while let Some(id) = current {
+        if let Some(node) = contexts.context(id) {
+            frames.push(InstantiationFrame { node });
+        }
+
+        current = contexts.parent(id);
+    }
+
+    frames.reverse();
+    frames
 }
 
 #[cfg(test)]
