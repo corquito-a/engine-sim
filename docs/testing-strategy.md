@@ -263,3 +263,70 @@ first time a divergence resists explanation; B once the pipeline is complete.
 5. `_checkReferences`, `_checkTypes`, operator tables — each with its fixtures.
 6. Then M3 (node generation) — where the runtime-only tests finally become
    usable, and the same fixtures get promoted from skip-list to executed.
+
+---
+
+## Hybridisation: measured, not assumed
+
+"Use more than one option to be sure" is right in spirit and wrong in
+arithmetic. Confidence multiplies only across *independent* failure modes. Two
+gates that look at the same observable, or that both need the port to be right
+in the same way, share their blind spots and add nothing.
+
+So the question was measured rather than argued.
+`rust/tools/mutation_check.py` applies one deliberate fault at a time to the
+ported circularity phase, runs the suite, and reports which gate notices. First
+run: **3 of 6**. That is the useful outcome — it located gaps instead of
+confirming the tests.
+
+| Mutation | First run | After the remedy | Remedy |
+|---|---|---|---|
+| cycle never reported | caught (unit + fixtures) | caught | — |
+| components gated on the inverted flag | caught (unit + fixtures) | caught | — |
+| walk never follows a node into its definition | caught | caught | — |
+| instantiation frames newest-first | **missed** | caught | 3-cycle fixture asserting frame *order*, not count |
+| no guard against re-entering the context chain | **missed** | caught (hang/overflow, no failing test name) | `circular_guard.mr`: a definition reached from a root that re-enters itself |
+| main context used where a plain one belongs | **missed** | **still missed** | call site now reads `main_child(…)`, so the boolean cannot be swapped at all |
+
+Three lessons, in order of importance:
+
+1. **The corpus and the resolved gate saw none of this.** They are invariant
+   under all six faults, by construction: every corpus script is acyclic and
+   well-formed. That is the concrete argument for option H over "we already have
+   58 scripts and 660 resolved rows" — volume of *passing* fixtures is not
+   coverage of *failure modes*.
+2. **Overlap is visible in the results.** The three caught mutations are caught
+   by the same four unit tests. Adding a fifth gate over the same observable
+   would not change the column. Independence, not count, is what to buy.
+3. **One fault was unobservable, and the answer was not another gate.** The
+   main-context flag is carried for operator expansion (`touchedMainContext`
+   gates whether `InvalidOperandTypes` may be reported), which is not ported, so
+   no assertion in the finished phases could see a swap — inventing one would
+   have tested my implementation against itself, not against the original. The
+   remedy is a shape change: the call site says `main_child(…)`, so the fault
+   can no longer be expressed. Prevention where observation is impossible;
+   fixtures where it is possible.
+
+### The hybrid that survives this filter
+
+| Layer | Option | What only it can see |
+|---|---|---|
+| semantics | H (original fixtures, `(code, line)` + counts) | wrong diagnostics on constructs the corpus lacks |
+| structure | A (`--expand` dump) | *which* node a reference lands on: memo, context identity, `checkReferences` gating — invisible to codes and to censuses |
+| shape | E (`main_child`/`child`, single memo write path) | faults that no assertion can reach, by making them unrepresentable |
+| meta | canary + this mutation check | gates that cannot fail |
+
+Deliberately excluded, with the threshold that would bring each back:
+
+* **C (live co-simulation)** — only if fixture maintenance exceeds ~1 turn a
+  month. Not reached: fixtures have changed only when I extended a dump.
+* **G (trace diffing)** — the first divergence that resists explanation by
+  reading. Then it is a one-turn investment with a clear target.
+* **B (mutation fuzzing of scripts)** — once the pipeline is complete, as a
+  net over `(code, line)` for inputs nobody wrote by hand.
+* **F (full construct matrix)** — reduced to a census; the cross-product is
+  combinatorial waste.
+
+**Working rule:** a phase is finished when `mutation_check.py` reports every
+mutation caught *or* explained (unobservable, with the shape changed so it
+cannot recur). That replaces "the tests pass" with "the tests would have failed".
