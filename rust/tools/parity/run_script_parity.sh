@@ -63,6 +63,8 @@ g++ -std=c++17 -O2 -fpermissive -D__forceinline=inline \
     -I "$REF_SCRIPT/include" \
     -I "$REF_SCRIPT/scripting/include" \
     -I "$REF_SCRIPT/dependencies/submodules" \
+    -I "$REF_SCRIPT/dependencies/submodules/piranha/test" \
+    -I "$REF_SCRIPT/gtest_shim" \
     -I "$REF_SCRIPT/dependencies/submodules/simple-2d-constraint-solver/include" \
     -I "$REF_SCRIPT/dependencies/submodules/csv-io/include" \
     -Wl,--allow-multiple-definition \

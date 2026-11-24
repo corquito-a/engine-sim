@@ -59,6 +59,23 @@ impl ContextArena {
     }
 
     /// `IrContextTree::newChild`
+    /// A child of `parent` that is a *main* context for `structure`.
+    ///
+    /// Named rather than written as `new_child(parent, structure, true)`: the
+    /// boolean is semantically load-bearing (`touchedMainContext` decides
+    /// whether operator expansion may report `InvalidOperandTypes`) and no gate
+    /// in the ported phases can observe it, so the argument is not one a caller
+    /// should be able to get wrong at a call site. See
+    /// `docs/testing-strategy.md`, blind spot 1.
+    pub fn main_child(&mut self, parent: ContextId, structure: Option<StructureId>) -> ContextId {
+        self.new_child(parent, structure, true)
+    }
+
+    /// A child of `parent` that is not a main context.
+    pub fn child(&mut self, parent: ContextId, structure: Option<StructureId>) -> ContextId {
+        self.new_child(parent, structure, false)
+    }
+
     pub fn new_child(
         &mut self,
         parent: ContextId,

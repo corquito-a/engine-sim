@@ -1,0 +1,4 @@
+import "engine_sim.mr"
+public node a { input x; b(1) }
+public node b { input y; c(1) }
+public node c { input z; a(1) }

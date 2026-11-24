@@ -146,9 +146,127 @@ pub fn is_builtin_node_type(name: &str) -> bool {
     BUILTIN_NODE_TYPES.contains(&name)
 }
 
+/// The names `piranha::TestRules` registers (`piranha/test/test_rules.cpp`),
+/// which is the rule set the original's own conformance suite compiles against.
+/// 37 `registerBuiltinType` calls, 37 distinct names.
+pub const PIRANHA_BUILTIN_NODE_TYPES: [&str; 37] = [
+    "__piranha__int",
+    "__piranha__float",
+    "__piranha__string",
+    "__piranha__vector",
+    "__piranha__bool",
+    "__piranha__vector_constructor",
+    "__piranha__throw_runtime_error",
+    "__piranha__int_probe",
+    "__piranha__int_add",
+    "__piranha__float_add",
+    "__piranha__string_add",
+    "__piranha__vector_add",
+    "__piranha__int_subtract",
+    "__piranha__float_subtract",
+    "__piranha__vector_subtract",
+    "__piranha__int_multiply",
+    "__piranha__float_multiply",
+    "__piranha__vector_multiply",
+    "__piranha__int_divide",
+    "__piranha__float_divide",
+    "__piranha__vector_divide",
+    "__piranha__int_negate",
+    "__piranha__float_negate",
+    "__piranha__vector_negate",
+    "__piranha__int_positive",
+    "__piranha__float_positive",
+    "__piranha__vector_positive",
+    "__piranha__bool_negate",
+    "__piranha__literal_string",
+    "__piranha__literal_int",
+    "__piranha__literal_float",
+    "__piranha__literal_bool",
+    "__piranha__string_to_float",
+    "__piranha__float_to_string",
+    "__piranha__int_to_float",
+    "__piranha__console_out",
+    "__piranha__console_in",
+];
+
+/// `LanguageRules::checkBuiltinType` for the conformance rule set.
+pub fn piranha_is_builtin_node_type(name: &str) -> bool {
+    PIRANHA_BUILTIN_NODE_TYPES.contains(&name)
+}
+
+/// Which `LanguageRules` a compilation is using. The two differ only in the
+/// builtin name table today; the operator tables will join them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Rules {
+    /// `es_script::LanguageRules` -- the engine's own scripts.
+    #[default]
+    EngineSim,
+    /// `piranha::TestRules` -- the original's conformance fixtures.
+    Piranha,
+}
+
+impl Rules {
+    /// `IrNodeDefinition::validateBuiltinMappings`' first check.
+    pub fn is_builtin_node_type(self, name: &str) -> bool {
+        match self {
+            Rules::EngineSim => is_builtin_node_type(name),
+            Rules::Piranha => piranha_is_builtin_node_type(name),
+        }
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The piranha table is a transcription, so it is checked against the file
+    /// it came from: every `registerBuiltinType<...>("name")` call must appear
+    /// in the table, and the table must not invent names. Angle brackets are
+    /// balanced when scanning because `OperationNodeSpecialized<...>` nests.
+    #[test]
+    fn the_piranha_table_matches_test_rules_cpp() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../dependencies/submodules/piranha/test/test_rules.cpp");
+        let source = std::fs::read_to_string(&path).expect("piranha submodule is checked out");
+
+        let mut names = Vec::new();
+        for (index, _) in source.match_indices("registerBuiltinType") {
+            let mut rest = &source[index + "registerBuiltinType".len()..];
+            rest = rest.trim_start();
+            assert!(rest.starts_with('<'), "expected a template argument");
+
+            let mut depth = 0usize;
+            let mut end = 0usize;
+            for (offset, character) in rest.char_indices() {
+                match character {
+                    '<' => depth += 1,
+                    '>' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = offset + 1;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            let after = &rest[end..];
+            let start = after.find('"').expect("a name argument") + 1;
+            let stop = after[start..].find('"').expect("a closing quote") + start;
+            names.push(after[start..stop].to_string());
+        }
+
+        assert_eq!(names.len(), PIRANHA_BUILTIN_NODE_TYPES.len());
+        for name in &names {
+            assert!(
+                piranha_is_builtin_node_type(name),
+                "{} is registered by test_rules.cpp but missing from the table",
+                name
+            );
+        }
+    }
 
     #[test]
     fn fundamental_channels_are_registered() {

@@ -133,8 +133,8 @@ pub enum Kind {
     Literal(Literal),
     Label(Token),
     NodeRef(StructureId),
-    Binary { op: BinOp, left: StructureId, right: StructureId },
-    Unary { op: UnOp, operand: StructureId },
+    Binary { token: Token, op: BinOp, left: StructureId, right: StructureId },
+    Unary { token: Token, op: UnOp, operand: StructureId },
 }
 
 impl Kind {
@@ -170,6 +170,9 @@ pub struct Arena {
     /// `IrCompilationUnit::addCompilationError` -- resolution and validation
     /// report through the unit, collected here in discovery order.
     pub(crate) errors: Vec<CompilationError>,
+    /// Which `LanguageRules` to consult. Defaults to the engine's own, which is
+    /// what every existing caller wants.
+    pub(crate) rules: crate::builtin_types::Rules,
 }
 
 impl Arena {
@@ -276,6 +279,15 @@ impl Arena {
         self.units.push(unit_id);
 
         unit_id
+    }
+
+    /// Selects the rule set (`IrCompilationUnit::setRules`).
+    pub fn set_rules(&mut self, rules: crate::builtin_types::Rules) {
+        self.rules = rules;
+    }
+
+    pub fn rules(&self) -> crate::builtin_types::Rules {
+        self.rules
     }
 
     pub fn errors(&self) -> &[CompilationError] {
@@ -672,8 +684,10 @@ impl Arena {
                 self.finish(id);
                 id
             }
-            Value::Binary { op, left, right } => {
-                let id = self.begin(Some(parent), Kind::Binary { op: *op, left: usize::MAX, right: usize::MAX });
+            Value::Binary { token, op, left, right } => {
+                let id = self.begin(Some(parent), Kind::Binary {
+                    token: token.clone(), op: *op, left: usize::MAX, right: usize::MAX,
+                });
                 let left = self.lower_value(id, left);
                 let right = self.lower_value(id, right);
                 let Kind::Binary { left: left_slot, right: right_slot, .. } =
@@ -686,8 +700,10 @@ impl Arena {
                 self.finish(id);
                 id
             }
-            Value::Unary { op, operand } => {
-                let id = self.begin(Some(parent), Kind::Unary { op: *op, operand: usize::MAX });
+            Value::Unary { token, op, operand } => {
+                let id = self.begin(Some(parent), Kind::Unary {
+                    token: token.clone(), op: *op, operand: usize::MAX,
+                });
                 let operand = self.lower_value(id, operand);
                 let Kind::Unary { operand: slot, .. } = &mut self.entries[id].kind else {
                     unreachable!()
@@ -790,13 +806,17 @@ impl Arena {
             Kind::Literal(Literal::Str(value)) => Value::Str { value: value.clone() },
             Kind::Label(token) => Value::Label { token: token.clone() },
             Kind::NodeRef(node) => Value::NodeRef { node: Box::new(self.to_node(*node)) },
-            Kind::Binary { op, left, right } => Value::Binary {
+            Kind::Binary { token, op, left, right } => Value::Binary {
+                token: token.clone(),
                 op: *op,
                 left: Box::new(self.to_value(*left)),
                 right: Box::new(self.to_value(*right)),
             },
-            Kind::Unary { op, operand } => {
-                Value::Unary { op: *op, operand: Box::new(self.to_value(*operand)) }
+            Kind::Unary { token, op, operand } => {
+                Value::Unary {
+                    token: token.clone(), op: *op,
+                    operand: Box::new(self.to_value(*operand)),
+                }
             }
             other => panic!("not a value: {:?}", other),
         }

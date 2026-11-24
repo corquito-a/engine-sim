@@ -48,6 +48,10 @@
 #include "core_trace_common.h"
 
 // The shell of the scripting layer, minus the window/rendering half.
+// `piranha/test/test_rules.cpp`: the rules the original's own test suite runs
+// against. Selected with `PARITY_RULES=test`; see `run_conformance.py`.
+#include "test_rules.h"
+
 #include "compiler.h"
 #include "actions.h"
 #include "vehicle.h"
@@ -232,6 +236,13 @@ static IrTokenInfo_string buildToken(const sx::Node &form) {
     IrTokenInfo_string token(wrapper.items[1].atom, 1, 1, 1, 1);
     token.specified = wrapper.flag(2);
     token.empty = !token.specified;
+
+    // `(tok "text" specified line)` when the dump carries lines; the IR
+    // round-trip dump does not, and then the default stands.
+    if (wrapper.items.size() > 3) {
+        token.lineStart = token.lineEnd = std::atoi(wrapper.items[3].atom.c_str());
+    }
+
     return token;
 }
 
@@ -292,24 +303,42 @@ static IrValue *buildValue(const sx::Node &form) {
 
     if (head == "bin") {
         const std::string &op = form.items[1].atom;
+        // `(bin add (tok "+" 1 26) l r)` when the dump carries lines.
+        const bool withToken = form.items[2].isList;
+        const int valueBase = withToken ? 3 : 2;
         IrBinaryOperator::Operator operation = IrBinaryOperator::Operator::Dot;
         if (op == "add") operation = IrBinaryOperator::Operator::Add;
         else if (op == "sub") operation = IrBinaryOperator::Operator::Sub;
         else if (op == "mul") operation = IrBinaryOperator::Operator::Mul;
         else if (op == "div") operation = IrBinaryOperator::Operator::Div;
 
-        return new IrBinaryOperator(
-            operation, buildValue(form.items[2]), buildValue(form.items[3]));
+        IrBinaryOperator *binary = new IrBinaryOperator(
+            operation, buildValue(form.items[valueBase]), buildValue(form.items[valueBase + 1]));
+
+        if (withToken) {
+            binary->m_summaryToken = buildToken(form.items[2]);
+        }
+
+        return binary;
     }
 
     if (head == "un") {
         const std::string &op = form.items[1].atom;
+        const bool withToken = form.items[2].isList;
+        const int valueBase = withToken ? 3 : 2;
         IrUnaryOperator::Operator operation = IrUnaryOperator::Operator::Default;
         if (op == "neg") operation = IrUnaryOperator::Operator::NumericNegate;
         else if (op == "not") operation = IrUnaryOperator::Operator::BoolNegate;
         else if (op == "pos") operation = IrUnaryOperator::Operator::Positive;
 
-        return new IrUnaryOperator(operation, buildValue(form.items[2]));
+        IrUnaryOperator *unary =
+            new IrUnaryOperator(operation, buildValue(form.items[valueBase]));
+
+        if (withToken) {
+            unary->m_summaryToken = buildToken(form.items[2]);
+        }
+
+        return unary;
     }
 
     std::fprintf(stderr, "ir dump: unknown value form '%s'\n", head.c_str());
@@ -342,12 +371,22 @@ static IrAttributeDefinition *buildPort(const sx::Node &form) {
         definition->setAlias(false);
     }
 
+    // `IrAttributeDefinition`'s constructor initialises `m_typeDefinition` and
+    // nothing else, so `m_typeInfo` is uninitialised memory unless it is always
+    // written. The grammar's action writes it for every port -- a default
+    // (unspecified) token when the script wrote no `[type]` -- and a garbage
+    // `specified` bit here makes `_resolveDefinitions` look up the empty type
+    // name and report `UndefinedNodeType` for ports that have no type at all.
+    piranha::IrTokenInfoSet<std::string, 2> info;
+    info.data[0] = IrTokenInfo_string();
+    info.data[1] = IrTokenInfo_string();
+
     if (type != nullptr) {
-        piranha::IrTokenInfoSet<std::string, 2> info;
         info.data[0] = buildToken(*type->child("ns"));
         info.data[1] = buildToken(*type->child("nm"));
-        definition->setTypeInfo(info);
     }
+
+    definition->setTypeInfo(info);
 
     // `IrAttributeDefinition` leaves `m_defaultValue` (and `m_isAlias`)
     // uninitialised: the grammar's actions are what set them, so the injection
@@ -1028,10 +1067,25 @@ int main(int argc, char **argv) {
 
     // `es_script::LanguageRules::initialize` registers the built-in node types;
     // `es_script::Compiler::initialize` would do this but also owns the parser.
-    static es_script::LanguageRules rules;
-    rules.initialize();
+    // `PARITY_RULES=test` swaps in the rules the original's own test suite uses,
+    // whose fixtures live under `piranha/test/sdl/`.
+    static es_script::LanguageRules esRules;
+    static TestRules testRules;
 
-    auto *compiler = new InjectedCompiler(&rules);
+    const char *rulesChoice = std::getenv("PARITY_RULES");
+    const bool useTestRules = (rulesChoice != nullptr && std::strcmp(rulesChoice, "test") == 0);
+
+    piranha::LanguageRules *rules = &esRules;
+    if (useTestRules) {
+        testRules.initialize();
+        rules = &testRules;
+    }
+    else {
+        esRules.initialize();
+    }
+
+
+    auto *compiler = new InjectedCompiler(rules);
     // Same search paths as `es_script::Compiler::initialize`.
     compiler->addSearchPath(piranha::IrPath("../../es/"));
     compiler->addSearchPath(piranha::IrPath("../es/"));
@@ -1040,7 +1094,7 @@ int main(int argc, char **argv) {
 
     piranha::ErrorList errorList;
     for (IrCompilationUnit *unit : units) {
-        unit->setRules(&rules);
+        unit->setRules(rules);
         unit->setErrorList(&errorList);
         // `Compiler::analyze` pushes every unit it parses; the injected units
         // take that place so `resolve()` and `validate()` see the same set.
@@ -1051,16 +1105,29 @@ int main(int argc, char **argv) {
     piranha::IrPath rootPath(argv[2]);
     IrCompilationUnit *root = analyze(*compiler, rootPath, analyzed);
 
+
     compiler->runResolve();
     compiler->runValidate();
 
     if (mode == "--errors") {
         // The error catalogue the Rust side has to reproduce, as one
         // `<stage><code>` line per error in discovery order.
+        //
+        // `PARITY_LINES=1` appends the source line, which is what the test
+        // suite asserts (`findError(list, code, 18)`).
+        const bool withLines = std::getenv("PARITY_LINES") != nullptr;
+
         for (int i = 0; i < errorList.getErrorCount(); ++i) {
             const piranha::CompilationError *error = errorList.getCompilationError(i);
             const piranha::ErrorCode_struct &code = error->getErrorCode();
-            std::printf("%s%s\n", code.stage.c_str(), code.code.c_str());
+
+            if (withLines) {
+                std::printf("%s%s,%d\n", code.stage.c_str(), code.code.c_str(),
+                    error->getErrorLocation()->lineStart);
+            }
+            else {
+                std::printf("%s%s\n", code.stage.c_str(), code.code.c_str());
+            }
         }
 
         return errorList.getErrorCount() > 0 ? 1 : 0;

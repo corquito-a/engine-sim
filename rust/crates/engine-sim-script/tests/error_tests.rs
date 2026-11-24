@@ -35,6 +35,9 @@ fn codes_for(script: &Path) -> Option<Vec<String>> {
     let mut arena = Arena::lower(&graph.units);
     arena.link_imports(&graph.imports);
     arena.resolve_all_definitions();
+    // `IrCompilationUnit::resolveAll` order: definitions, circularity, then
+    // validation reports on what resolution decided.
+    arena.check_circular_definitions_all();
     arena.validate_all();
 
     let mut codes: Vec<String> = arena
@@ -108,5 +111,5 @@ fn negative_scripts_report_the_reference_errors() {
         checked += 1;
     }
 
-    assert_eq!(checked, 13, "every negative fixture is checked");
+    assert_eq!(checked, 17, "every negative fixture is checked");
 }

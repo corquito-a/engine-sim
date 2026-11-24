@@ -287,10 +287,10 @@ fn arithmetic_precedence_matches_the_grammar() {
 
     // ((1 + (2 * 3)) - (4 / 5))
     match value {
-        Value::Binary { op: BinOp::Sub, left, right } => {
+        Value::Binary { op: BinOp::Sub, left, right, .. } => {
             assert_eq!(*right, binary(BinOp::Div, Value::Int { value: 4 }, Value::Int { value: 5 }));
             match *left {
-                Value::Binary { op: BinOp::Add, left: inner_left, right: inner_right } => {
+                Value::Binary { op: BinOp::Add, left: inner_left, right: inner_right, .. } => {
                     assert_eq!(*inner_left, Value::Int { value: 1 });
                     assert_eq!(
                         *inner_right,
@@ -304,8 +304,32 @@ fn arithmetic_precedence_matches_the_grammar() {
     }
 }
 
+fn unary(op: UnOp, operand: Value) -> Value {
+    let symbol = match op {
+        UnOp::Default => "default",
+        UnOp::NumericNegate => "-",
+        UnOp::BoolNegate => "!",
+        UnOp::Positive => "+",
+    };
+
+    Value::Unary { token: Token::new(symbol), op, operand: Box::new(operand) }
+}
+
 fn binary(op: BinOp, left: Value, right: Value) -> Value {
-    Value::Binary { op, left: Box::new(left), right: Box::new(right) }
+    let symbol = match op {
+        BinOp::Dot => ".",
+        BinOp::Add => "+",
+        BinOp::Sub => "-",
+        BinOp::Mul => "*",
+        BinOp::Div => "/",
+    };
+
+    Value::Binary {
+        token: Token::new(symbol),
+        op,
+        left: Box::new(left),
+        right: Box::new(right),
+    }
 }
 
 #[test]
@@ -314,18 +338,18 @@ fn unary_operators_bind_tighter_than_multiplication() {
     let value = definition(&parsed, 0).ports[0].default_value.clone().unwrap();
 
     match value {
-        Value::Binary { op: BinOp::Add, left, right } => {
+        Value::Binary { op: BinOp::Add, left, right, .. } => {
             assert_eq!(
                 *left,
                 binary(
                     BinOp::Mul,
-                    Value::Unary { op: UnOp::NumericNegate, operand: Box::new(Value::Int { value: 1 }) },
+                    unary(UnOp::NumericNegate, Value::Int { value: 1 }),
                     Value::Int { value: 2 }
                 )
             );
             assert_eq!(
                 *right,
-                Value::Unary { op: UnOp::Positive, operand: Box::new(Value::Int { value: 3 }) }
+                unary(UnOp::Positive, Value::Int { value: 3 })
             );
         }
         other => panic!("expected an addition, got {:?}", other),
@@ -353,7 +377,7 @@ fn dot_chains_nest_left_to_right() {
     let value = definition(&parsed, 0).ports[0].default_value.clone().unwrap();
 
     match value {
-        Value::Binary { op: BinOp::Dot, left, right } => {
+        Value::Binary { op: BinOp::Dot, left, right, .. } => {
             assert_eq!(*right, Value::Label { token: Token::with_location("c", 1, 23) });
             assert_eq!(
                 *left,

@@ -13,6 +13,7 @@
 
 pub mod builtin_types;
 pub mod channel_type;
+pub mod circular;
 pub mod context;
 pub mod definitions;
 pub mod dump;
@@ -29,7 +30,8 @@ pub mod validate;
 pub use builtin_types::builtin_channel_type;
 pub use channel_type::{ChannelType, ChannelTypeRegistry};
 pub use context::{ContextArena, ContextId};
-pub use dump::{dump_unit, dump_units};
+pub use builtin_types::Rules;
+pub use dump::{dump_unit, dump_units, dump_units_with};
 pub use error::{CompilationError, ErrorCode, ErrorList};
 pub use ir::*;
 pub use lexer::{tokenize, Kind, Literal, Scanner, Token as LexToken};
