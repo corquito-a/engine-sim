@@ -26,6 +26,7 @@
 //! | `IrBinaryOperator` | left, then right |
 //! | `IrUnaryOperator` | the operand |
 
+use crate::error::CompilationError;
 use crate::ir::*;
 
 pub type StructureId = usize;
@@ -164,8 +165,11 @@ pub struct Entry {
 
 #[derive(Clone, Debug, Default)]
 pub struct Arena {
-    entries: Vec<Entry>,
-    units: Vec<StructureId>,
+    pub(crate) entries: Vec<Entry>,
+    pub(crate) units: Vec<StructureId>,
+    /// `IrCompilationUnit::addCompilationError` -- resolution and validation
+    /// report through the unit, collected here in discovery order.
+    pub(crate) errors: Vec<CompilationError>,
 }
 
 impl Arena {
@@ -272,6 +276,39 @@ impl Arena {
         self.units.push(unit_id);
 
         unit_id
+    }
+
+    pub fn errors(&self) -> &[CompilationError] {
+        &self.errors
+    }
+
+    pub fn take_errors(&mut self) -> Vec<CompilationError> {
+        std::mem::take(&mut self.errors)
+    }
+
+    /// Links every import statement to the unit it resolved to
+    /// (`IrImportStatement::setUnit`, set by `Compiler::analyze`).
+    pub fn link_imports(&mut self, import_paths: &[Vec<String>]) {
+        let mut by_path = std::collections::BTreeMap::new();
+        for unit in &self.units {
+            if let Kind::Unit(data) = &self.entries[*unit].kind {
+                by_path.insert(data.path.clone(), *unit);
+            }
+        }
+
+        for (unit, paths) in self.units.clone().iter().zip(import_paths) {
+            let imports = match &self.entries[*unit].kind {
+                Kind::Unit(data) => data.imports.clone(),
+                _ => continue,
+            };
+
+            for (import, path) in imports.iter().zip(paths) {
+                let target = by_path.get(path).copied();
+                if let Kind::Import(data) = &mut self.entries[*import].kind {
+                    data.unit = target;
+                }
+            }
+        }
     }
 
     pub fn units(&self) -> &[StructureId] {

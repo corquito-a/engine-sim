@@ -70,18 +70,35 @@ pub fn parent(path: &str) -> String {
 ///
 /// `search_paths` are tried in order, like `Compiler::addSearchPath`.
 pub fn load(root: &str, search_paths: &[&str]) -> Result<Vec<Unit>, LoadError> {
+    Ok(load_graph(root, search_paths)?.units)
+}
+
+/// A loaded import graph: the units in pre-order, plus -- for each unit, in
+/// order -- the paths of the units its `import` statements resolved to.
+///
+/// Resolution needs the second half: `IrCompilationUnit::resolveNodeDefinition`
+/// walks `m_importStatements` and follows `IrImportStatement::getUnit()`.
+#[derive(Debug)]
+pub struct LoadedGraph {
+    pub units: Vec<Unit>,
+    pub imports: Vec<Vec<String>>,
+}
+
+pub fn load_graph(root: &str, search_paths: &[&str]) -> Result<LoadedGraph, LoadError> {
     let mut units = Vec::new();
+    let mut imports = Vec::new();
     let mut visited = HashSet::new();
 
-    analyze(root, search_paths, &mut units, &mut visited)?;
+    analyze(root, search_paths, &mut units, &mut imports, &mut visited)?;
 
-    Ok(units)
+    Ok(LoadedGraph { units, imports })
 }
 
 fn analyze(
     path: &str,
     search_paths: &[&str],
     units: &mut Vec<Unit>,
+    imports: &mut Vec<Vec<String>>,
     visited: &mut HashSet<String>,
 ) -> Result<(), LoadError> {
     // `Compiler::getUnit` compares paths with `std::filesystem::equivalent`, so
@@ -153,10 +170,21 @@ fn analyze(
         resolved.push(full);
     }
 
+    // The same canonical spelling the unit is filed under, so `link_imports`
+    // can match an import to a unit by path.
+    let resolved: Vec<String> = resolved
+        .into_iter()
+        .map(|path| match std::fs::canonicalize(&path) {
+            Ok(canonical) => canonical.to_string_lossy().into_owned(),
+            Err(_) => path,
+        })
+        .collect();
+
     units.push(unit);
+    imports.push(resolved.clone());
 
     for import in resolved {
-        analyze(&import, search_paths, units, visited)?;
+        analyze(&import, search_paths, units, imports, visited)?;
     }
 
     Ok(())

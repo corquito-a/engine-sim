@@ -92,6 +92,21 @@ if [ "${RECORD_RESOLVED:-0}" = "1" ]; then
     exit 0
 fi
 
+# How much of M2 is still open, measured against the recorded reference dump.
+# Informational: it cannot pass until resolution and type checking exist.
+if [ "${RESOLVED_GAP:-0}" = "1" ]; then
+    echo "== resolved-type gap (informational) =="
+    (cd "$RUST_DIR" && cargo build --release --example resolved_dump >/dev/null)
+    for entry in es/engine_sim.mr assets/main.mr; do
+        name=$(echo "$entry" | tr '/' '_' | sed 's/\.mr$//')
+        "$RUST_DIR/target/release/examples/resolved_dump" "$entry" > "$WORK/rust.resolved"
+        echo "-- $entry"
+        python3 "$HERE/compare_resolved.py" "$WORK/rust.resolved" \
+            "$RUST_DIR/crates/engine-sim-script/fixtures/${name}.resolved" || true
+    done
+    exit 0
+fi
+
 echo "== gate IR: parse every script =="
 "$RUST_DIR/target/release/examples/corpus_check" "$REPO_ROOT/es" "$REPO_ROOT/assets"
 
