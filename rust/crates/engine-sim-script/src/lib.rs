@@ -24,6 +24,7 @@ pub mod name;
 pub mod parser;
 pub mod resolve;
 pub mod resolved;
+pub mod validate;
 
 pub use builtin_types::builtin_channel_type;
 pub use channel_type::{ChannelType, ChannelTypeRegistry};

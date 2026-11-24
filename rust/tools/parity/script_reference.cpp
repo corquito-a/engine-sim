@@ -14,6 +14,7 @@
 //
 //   script_reference --run <root.mr> <dump.txt> [steps]
 //   script_reference --resolved <root.mr> <dump.txt>
+//   script_reference --errors <root.mr> <dump.txt>
 //       Rebuild the IR, run resolve/validate/build/execute exactly like
 //       `EngineSimApplication::loadScript`, then dump the resulting engine and
 //       a deterministic simulation trace.
@@ -990,7 +991,8 @@ int main(int argc, char **argv) {
             "usage: script_reference --ir    <dump.txt>\n"
             "       script_reference --check <root.mr> <dump.txt>\n"
             "       script_reference --run   <root.mr> <dump.txt> [steps]\n"
-            "       script_reference --resolved <root.mr> <dump.txt>\n");
+            "       script_reference --resolved <root.mr> <dump.txt>\n"
+            "       script_reference --errors <root.mr> <dump.txt>\n");
         return 2;
     }
 
@@ -1016,7 +1018,8 @@ int main(int argc, char **argv) {
         return 0;
     }
 
-    if ((mode != "--run" && mode != "--check" && mode != "--resolved") || argc < 4) {
+    if ((mode != "--run" && mode != "--check" && mode != "--resolved"
+            && mode != "--errors") || argc < 4) {
         std::fprintf(stderr, "unknown mode '%s'\n", mode.c_str());
         return 2;
     }
@@ -1050,6 +1053,18 @@ int main(int argc, char **argv) {
 
     compiler->runResolve();
     compiler->runValidate();
+
+    if (mode == "--errors") {
+        // The error catalogue the Rust side has to reproduce, as one
+        // `<stage><code>` line per error in discovery order.
+        for (int i = 0; i < errorList.getErrorCount(); ++i) {
+            const piranha::CompilationError *error = errorList.getCompilationError(i);
+            const piranha::ErrorCode_struct &code = error->getErrorCode();
+            std::printf("%s%s\n", code.stage.c_str(), code.code.c_str());
+        }
+
+        return errorList.getErrorCount() > 0 ? 1 : 0;
+    }
 
     if (errorList.getErrorCount() > 0) {
         for (int i = 0; i < errorList.getErrorCount(); ++i) {

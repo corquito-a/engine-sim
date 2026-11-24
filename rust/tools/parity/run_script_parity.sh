@@ -92,6 +92,20 @@ if [ "${RECORD_RESOLVED:-0}" = "1" ]; then
     exit 0
 fi
 
+# The error catalogue's expectations: one `.errors` file per broken script in
+# `negative/`, recorded from `script_reference --errors`.
+if [ "${RECORD_ERRORS:-0}" = "1" ]; then
+    echo "== recording the error fixtures =="
+    for script in "$HERE"/negative/*.mr "$HERE"/negative/*/root.mr; do
+        [ -f "$script" ] || continue
+        (cd "$REPO_ROOT" && "$IR_DUMP" "$script" > "$WORK/negative.ir")
+        "$WORK/script_reference" --errors "$script" "$WORK/negative.ir" 2>/dev/null \
+            > "${script%.mr}.errors" || true
+        echo "  $(basename "$(dirname "$script")")/$(basename "$script"): $(tr '\n' ' ' < "${script%.mr}.errors")"
+    done
+    exit 0
+fi
+
 # How much of M2 is still open, measured against the recorded reference dump.
 # Informational: it cannot pass until resolution and type checking exist.
 if [ "${RESOLVED_GAP:-0}" = "1" ]; then

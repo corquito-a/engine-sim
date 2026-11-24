@@ -209,7 +209,7 @@ impl Arena {
 
     /// The input-like ports of a definition, in declaration order:
     /// `IrAttributeDefinitionList::getInputDefinition` skipping outputs.
-    fn input_definitions(&self, definition: StructureId) -> Vec<StructureId> {
+    pub(crate) fn input_definitions(&self, definition: StructureId) -> Vec<StructureId> {
         let Kind::NodeDefinition(data) = self.kind(definition) else {
             return Vec::new();
         };
