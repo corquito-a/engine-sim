@@ -134,12 +134,35 @@ pub enum Kind {
     Label(Token),
     NodeRef(StructureId),
     Binary { token: Token, op: BinOp, left: StructureId, right: StructureId },
+    /// `IrInternalReference`: a value an expansion created to point at an
+    /// existing structure *in a fixed context*.
+    InternalReference { structure: StructureId, context: Option<crate::context::ContextId> },
     Unary { token: Token, op: UnOp, operand: StructureId },
 }
 
 impl Kind {
     pub fn is_unit(&self) -> bool {
         matches!(self, Kind::Unit(_))
+    }
+}
+
+impl NodeData {
+    pub fn new(
+        type_name: Token,
+        library: Token,
+        name: Token,
+        attributes: StructureId,
+    ) -> Self {
+        NodeData {
+            type_name,
+            library,
+            name,
+            attributes,
+            definition: None,
+            is_interface: false,
+            build: true,
+            auto_instance: false,
+        }
     }
 }
 
@@ -161,6 +184,26 @@ pub struct Entry {
     pub check_references: bool,
     pub flags: Flags,
     pub kind: Kind,
+}
+
+impl Entry {
+    /// A structure that did not come from source: an expansion. It has no
+    /// tokens, so its summary stays the "no position" span, and it is linked to
+    /// its parent the way `setLogicalParent`/`setScopeParent` do.
+    pub(crate) fn synthetic(parent: StructureId, parent_unit: Option<StructureId>) -> Self {
+        Entry {
+            parent: Some(parent),
+            scope_parent: Some(parent),
+            logical_parent: Some(parent),
+            parent_unit,
+            summary: Token::unspecified(),
+            visibility: Visibility::Default,
+            default_visibility: Visibility::Private,
+            check_references: true,
+            flags: Flags::default(),
+            kind: Kind::AttributeList(Vec::new()),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -358,6 +401,7 @@ impl Arena {
             Kind::AttributeDefinitionList(items) => items.clone(),
             Kind::NodeList(items) => items.clone(),
             Kind::NodeRef(node) => vec![*node],
+            Kind::InternalReference { .. } => Vec::new(),
             Kind::Binary { left, right, .. } => vec![*left, *right],
             Kind::Unary { operand, .. } => vec![*operand],
             Kind::Import(_) | Kind::Literal { .. } | Kind::Label(_) => Vec::new(),
@@ -465,8 +509,16 @@ impl Arena {
         child
     }
 
+    /// Push a structure built after lowering (an expansion). It has no tokens,
+    /// so its summary stays the "no position" span, and it is linked to its
+    /// parent the way `setLogicalParent`/`setScopeParent` do.
+    pub(crate) fn push_entry(&mut self, entry: Entry) -> StructureId {
+        self.entries.push(entry);
+        self.entries.len() - 1
+    }
+
     /// The enclosing unit of a structure, if it has one.
-    fn unit_of(&self, id: StructureId) -> Option<StructureId> {
+    pub(crate) fn unit_of(&self, id: StructureId) -> Option<StructureId> {
         let mut current = Some(id);
         while let Some(candidate) = current {
             if self.entries[candidate].kind.is_unit() {

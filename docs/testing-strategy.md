@@ -551,3 +551,61 @@ So the phase stays opt-in until expansion lands. This is the useful kind of
 negative result: it says the machinery is structurally right (R0061 matches
 line-for-line, most R0050/R0060 land on the right line) and that the *only*
 thing between it and the gate is expansion, not more reference logic.
+
+---
+
+## The language rules are generated, not transcribed
+
+Expansion asks the rules four questions -- which builtin node stands behind a
+literal, behind `left op right`, behind a unary operator, and behind a
+conversion -- and the answers are 4 + 12 + 2 + 3 calls in
+`scripting/src/language_rules.cpp` and 4 + 17 + 7 + 3 in
+`piranha/test/test_rules.cpp`.
+
+`rust/tools/parity/extract_language_rules.py` parses those two files and writes
+`src/language_rules.rs`; every call site has to produce exactly one row, so a
+parse that stops early fails instead of writing a short table.
+`tests/language_rules_tests.rs` then re-derives both tables from the C++ with an
+independent parser and compares them row for row -- the same guard the
+builtin-node table uses, and the reason `--check` has a second caller in CI.
+
+Two details of the lookup that the table has to respect:
+`resolveOperatorBuiltinType` returns `""` when *either* operand type is null
+(unlike `checkConversion`, which returns false), and the probe is not
+reversible, so `float * int` and `int * float` are different questions -- the
+es rules answer the first and not the second.
+
+---
+
+## Expansion: implemented, measured, not yet faithful
+
+`expansion.rs` reproduces both entry points (`expand()` with its per-structure
+flag, `expand(context)` with its `m_expansions` memo), the unit's and the node's
+`_expand`, `expandChain`, and the five overrides that create something: literal
+nodes, interface nodes for untyped ports, conversion nodes, and unary/binary
+operation nodes whose inputs are `IrInternalReference`s.
+
+Behind `SCRIPT_EXPAND=1`, because the result is not yet right:
+
+| | off | expand | expand + references |
+|---|---|---|---|
+| MATCH | 63 | 62 | 43 |
+| `E0010` missing | 9 | 9 | 9 |
+
+Two symptoms, and they point the same way:
+
+* `general_syntax_test_1.mr` -- the original reports `R0050,18` (an undefined
+  label in an operand) and no operator error; the port reports `E0010,18`
+  twice. So the port reaches the rule lookup in a context the original does not.
+* the nine fixtures that *should* produce `E0010` produce nothing, so in the
+  contexts that matter the port bails out one step too early.
+
+That is the same pair of conditions read in opposite directions:
+`touchedMainContext || emptyContext` gates the report, and
+`isFixedType`/`isStaticType` decides whether a dead end is fatal. A useful
+sub-observation while chasing it: the unit's `_expand()` -- all components
+against a unit main context -- is what expands an instance's attributes and
+therefore its literals, and leaving it out made every literal lookup fail in the
+unit context (`[literal] __piranha__literal_int ... context=6` but a lookup at
+context 0). The remaining work is to get those conditions right, not to add
+machinery.

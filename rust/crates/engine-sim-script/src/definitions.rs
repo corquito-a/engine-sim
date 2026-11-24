@@ -142,7 +142,7 @@ impl Arena {
         }
     }
 
-    fn resolve_definitions(&mut self, structure: StructureId) {
+    pub(crate) fn resolve_definitions(&mut self, structure: StructureId) {
         if self.entry(structure).flags.definitions_resolved {
             return;
         }
