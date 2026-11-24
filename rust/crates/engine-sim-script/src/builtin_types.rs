@@ -13,7 +13,7 @@
 //! `BuiltinTypeInfo::nodeType` is null, so the original reports no type either.
 
 use crate::ir::{BinOp, UnOp};
-use crate::language_rules::LiteralKind;
+use crate::language_rules::{BuiltinPorts, LiteralKind};
 
 /// Every name `registerBuiltinType` registers, whether or not it carries a
 /// channel type -- this is what `LanguageRules::checkBuiltinType` tests, and
@@ -193,6 +193,21 @@ impl Rules {
             .map(|rule| rule.channel_type)
     }
 
+    /// The reference node's ports, as `Node::getInputPortInfo` /
+    /// `getOutputPortInfo` report them -- what
+    /// `IrNodeDefinition::validateBuiltinMappings` compares a `=>` definition
+    /// against. `None` for a name the rules do not register or one whose
+    /// reference node has no ports at all; the caller has already reported
+    /// `V0070` in the first case and returns.
+    pub fn builtin_ports(self, builtin: &str) -> Option<&'static BuiltinPorts> {
+        match self {
+            Rules::EngineSim => crate::language_rules::ENGINE_SIM_BUILTIN_PORTS,
+            Rules::Piranha => crate::language_rules::PIRANHA_BUILTIN_PORTS,
+        }
+        .iter()
+        .find(|entry| entry.builtin == builtin)
+    }
+
     /// `LanguageRules::resolveLiteralBuiltinType` -- which builtin node stands
     /// behind a literal of this type.
     pub fn literal_builtin(self, literal: LiteralKind) -> Option<&'static str> {
@@ -360,6 +375,26 @@ mod tests {
             rules.channel_type("__engine_sim__exhaust_system_channel"),
             Some("ExhaustSystemChannel")
         );
+    }
+
+    /// A registered builtin always has a reference node, and therefore an entry
+    /// in the port table -- even an empty one, because "the reference has no
+    /// ports" and "there is no such builtin" are different answers (`V0080` vs
+    /// `V0070`). This is what catches a `builtin_ports.txt` recorded before a
+    /// builtin was added.
+    #[test]
+    fn every_registered_builtin_has_a_port_table() {
+        for (rules, names) in [
+            (Rules::EngineSim, BUILTIN_NODE_TYPES),
+            (Rules::Piranha, &PIRANHA_BUILTIN_NODE_TYPES[..]),
+        ] {
+            for name in names {
+                assert!(
+                    rules.builtin_ports(name).is_some(),
+                    "{name:?} is registered but missing from builtin_ports.txt"
+                );
+            }
+        }
     }
 
     #[test]

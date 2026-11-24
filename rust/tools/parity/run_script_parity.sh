@@ -37,41 +37,7 @@ fi
 mkdir -p "$WORK"
 cd "$REPO_ROOT"
 
-echo "== building the oracle =="
-
-# `Synthesizer::renderAudio` and the combustion chamber draw from `rand()`; the
-# core parity harness replaces the generator so the stream is reproducible, and
-# the oracle needs the same substitution.
-g++ -std=c++17 -O2 -fpermissive -D__forceinline=inline \
-    -include cmath -include cstdlib -include cstring \
-    -include "$HERE/parity_rand.h" \
-    -I "$REF_SCRIPT/include" \
-    -I "$REF_SCRIPT/dependencies/submodules/simple-2d-constraint-solver/include" \
-    -I "$REF_SCRIPT/dependencies/submodules/csv-io/include" \
-    -c "${REF_CORE:-/tmp/refcore}/src/combustion_chamber.cpp" -o "$WORK/combustion_chamber_parity.o"
-
-g++ -std=c++17 -O2 -fpermissive -D__forceinline=inline \
-    -include cmath -include cstdlib -include cstring \
-    -include "$HERE/parity_rand.h" \
-    -I "$REF_SCRIPT/include" \
-    -I "$REF_SCRIPT/dependencies/submodules/simple-2d-constraint-solver/include" \
-    -I "$REF_SCRIPT/dependencies/submodules/csv-io/include" \
-    -c "${REF_CORE:-/tmp/refcore}/src/synthesizer.cpp" -o "$WORK/synthesizer_parity.o"
-
-g++ -std=c++17 -O2 -fpermissive -D__forceinline=inline \
-    -include cmath -include cstdlib -include cstring \
-    -I "$REF_SCRIPT/include" \
-    -I "$REF_SCRIPT/scripting/include" \
-    -I "$REF_SCRIPT/dependencies/submodules" \
-    -I "$REF_SCRIPT/dependencies/submodules/piranha/test" \
-    -I "$REF_SCRIPT/gtest_shim" \
-    -I "$REF_SCRIPT/dependencies/submodules/simple-2d-constraint-solver/include" \
-    -I "$REF_SCRIPT/dependencies/submodules/csv-io/include" \
-    -Wl,--allow-multiple-definition \
-    "$HERE/script_reference.cpp" "$HERE/parity_rand.cpp" \
-    "$WORK/combustion_chamber_parity.o" "$WORK/synthesizer_parity.o" \
-    -Wl,--start-group "$REF_SCRIPT/librefscript.a" "${REF_CORE:-/tmp/refcore}/librefcore.a" -Wl,--end-group \
-    -o "$WORK/script_reference"
+"$HERE/build_script_reference.sh"
 
 echo "== building the rust front end =="
 (cd "$RUST_DIR" && cargo build --release --example ir_dump --example corpus_check >/dev/null)

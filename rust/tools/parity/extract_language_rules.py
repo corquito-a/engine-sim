@@ -18,6 +18,12 @@ short table.
 
     python3 rust/tools/parity/extract_language_rules.py [--check]
 
+The fifth table -- the ports of each builtin's *reference node* -- cannot be read
+out of the sources: a reference node is a real `Node` instance whose ports are
+registered from constructors, so the answers come from running the original.
+They are recorded into `tools/parity/builtin_ports.txt` by
+`record_builtin_ports.sh` and folded in here.
+
 `--check` compares the file on disk with what would be generated and exits
 non-zero if they differ.
 """
@@ -35,6 +41,8 @@ SOURCES = {
     "ENGINE_SIM": ROOT / "scripting/src/language_rules.cpp",
     "PIRANHA": ROOT / "dependencies/submodules/piranha/test/test_rules.cpp",
 }
+
+PORTS = ROOT / "rust/tools/parity/builtin_ports.txt"
 
 FUNDAMENTAL = ROOT / "dependencies/submodules/piranha/src/fundamental_types.cpp"
 OBJECT_CHANNELS = ROOT / "scripting/src/channel_types.cpp"
@@ -149,7 +157,56 @@ def parse(source: str, names: dict[str, str]) -> dict[str, list[tuple]]:
     }
 
 
-def render(tables: dict[str, dict[str, list[tuple]]]) -> str:
+def parse_ports() -> dict[str, dict[str, list[tuple]]]:
+    """The recorded reference-node ports, per rule set.
+
+    `input,<builtin>,<port>,<modifiesInput>,<enableInput>` and
+    `output,<builtin>,<port>,<isAlias>`, with `absent,<builtin>` for a name the
+    rules do not register (which no rule set currently does).
+    """
+    tables: dict[str, dict[str, list[tuple]]] = {}
+    current = None
+
+    for line in PORTS.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+
+        if line.startswith("[") and line.endswith("]"):
+            current = line[1:-1].upper()
+            tables[current] = {"builtins": [], "inputs": [], "outputs": [], "absent": []}
+            continue
+
+        assert current is not None, f"a row before any rule set: {line!r}"
+        fields = line.split(",")
+
+        if fields[0] == "builtin":
+            assert len(fields) == 2, line
+            tables[current]["builtins"].append(fields[1])
+        elif fields[0] == "absent":
+            assert len(fields) == 2, line
+            tables[current]["absent"].append(fields[1])
+        elif fields[0] == "input":
+            assert len(fields) == 5, line
+            tables[current]["inputs"].append(
+                (fields[1], fields[2], fields[3] == "1", fields[4] == "1")
+            )
+        elif fields[0] == "output":
+            assert len(fields) == 4, line
+            tables[current]["outputs"].append((fields[1], fields[2], fields[3] == "1"))
+        else:
+            raise AssertionError(f"unknown port row {line!r}")
+
+    assert set(tables) == {"ENGINE_SIM", "PIRANHA"}, sorted(tables)
+
+    for name, table in tables.items():
+        assert not table["absent"], f"{name} has unregistered builtin names"
+        assert table["builtins"], name
+
+    return tables
+
+
+def render(tables: dict[str, dict[str, list[tuple]]], ports: dict[str, dict[str, list[tuple]]]) -> str:
     lines = [
         "//! The language rules' literal, operator and conversion table.",
         "//!",
@@ -203,6 +260,35 @@ def render(tables: dict[str, dict[str, list[tuple]]]) -> str:
         "",
     ]
 
+    for declaration in [
+        "/// One port of a builtin's reference node, as `Node::getInputPortInfo`",
+        "/// reports it (`IrNodeDefinition::validateBuiltinMappings`, `V0080`).",
+        "#[derive(Clone, Copy, Debug, PartialEq, Eq)]",
+        "pub struct BuiltinInputPort {",
+        "    pub name: &'static str,",
+        "    pub modifies_input: bool,",
+        "    pub toggle: bool,",
+        "}",
+        "",
+        "/// One output of a builtin's reference node, as `Node::getOutputPortInfo`",
+        "/// reports it (`V0081`, and the alias flag behind `V0110`).",
+        "#[derive(Clone, Copy, Debug, PartialEq, Eq)]",
+        "pub struct BuiltinOutputPort {",
+        "    pub name: &'static str,",
+        "    pub alias: bool,",
+        "}",
+        "",
+        "/// The ports a builtin type's reference node was built with.",
+        "#[derive(Clone, Copy, Debug, PartialEq, Eq)]",
+        "pub struct BuiltinPorts {",
+        "    pub builtin: &'static str,",
+        "    pub inputs: &'static [BuiltinInputPort],",
+        "    pub outputs: &'static [BuiltinOutputPort],",
+        "}",
+        "",
+    ]:
+        lines.append(declaration)
+
     lines.append("/// `registerBuiltinType<...>(\"name\", &ChannelType)` -- the builtins")
     lines.append("/// that name a channel type, in registration order.")
     lines.append("#[derive(Clone, Copy, Debug, PartialEq, Eq)]")
@@ -253,13 +339,47 @@ def render(tables: dict[str, dict[str, list[tuple]]]) -> str:
         lines.append("];")
         lines.append("")
 
+        # The port table, keyed by the builtins the dump listed -- a reference
+        # node with no ports is a row with two empty slices, not a missing row.
+        grouped: dict[str, dict[str, list[tuple]]] = {}
+        for builtin in ports[set_name]["builtins"]:
+            grouped.setdefault(builtin, {"inputs": [], "outputs": []})
+        for builtin, port, modifies, toggle in ports[set_name]["inputs"]:
+            assert builtin in grouped, builtin
+            grouped[builtin]["inputs"].append((port, modifies, toggle))
+        for builtin, port, alias in ports[set_name]["outputs"]:
+            assert builtin in grouped, builtin
+            grouped[builtin]["outputs"].append((port, alias))
+
+        lines.append(f"pub const {set_name}_BUILTIN_PORTS: &[BuiltinPorts] = &[")
+        for builtin, entry in grouped.items():
+            lines.append("    BuiltinPorts {")
+            lines.append(f'        builtin: "{builtin}",')
+            lines.append("        inputs: &[")
+            for port, modifies, toggle in entry["inputs"]:
+                lines.append(
+                    f'            BuiltinInputPort {{ name: "{port}", '
+                    f"modifies_input: {str(modifies).lower()}, toggle: {str(toggle).lower()} }},"
+                )
+            lines.append("        ],")
+            lines.append("        outputs: &[")
+            for port, alias in entry["outputs"]:
+                lines.append(
+                    f'            BuiltinOutputPort {{ name: "{port}", alias: {str(alias).lower()} }},'
+                )
+            lines.append("        ],")
+            lines.append("    },")
+        lines.append("];")
+        lines.append("")
+
     return "\n".join(lines) + "\n"
 
 
 def main() -> int:
     names = channel_type_names()
     tables = {name: parse(path.read_text(), names) for name, path in SOURCES.items()}
-    rendered = render(tables)
+    ports = parse_ports()
+    rendered = render(tables, ports)
 
     if "--check" in sys.argv[1:]:
         if OUTPUT.read_text() != rendered:
@@ -273,7 +393,8 @@ def main() -> int:
         print(
             f"{name}: {len(table['builtins'])} builtin channel types, "
             f"{len(table['literals'])} literals, {len(table['operators'])} operators, "
-            f"{len(table['unary'])} unary, {len(table['conversions'])} conversions"
+            f"{len(table['unary'])} unary, {len(table['conversions'])} conversions, "
+            f"{len(ports[name]['builtins'])} builtin port tables"
         )
 
     return 0

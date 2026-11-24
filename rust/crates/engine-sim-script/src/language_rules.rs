@@ -48,6 +48,31 @@ pub struct ConversionRule {
     pub builtin: &'static str,
 }
 
+/// One port of a builtin's reference node, as `Node::getInputPortInfo`
+/// reports it (`IrNodeDefinition::validateBuiltinMappings`, `V0080`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BuiltinInputPort {
+    pub name: &'static str,
+    pub modifies_input: bool,
+    pub toggle: bool,
+}
+
+/// One output of a builtin's reference node, as `Node::getOutputPortInfo`
+/// reports it (`V0081`, and the alias flag behind `V0110`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BuiltinOutputPort {
+    pub name: &'static str,
+    pub alias: bool,
+}
+
+/// The ports a builtin type's reference node was built with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BuiltinPorts {
+    pub builtin: &'static str,
+    pub inputs: &'static [BuiltinInputPort],
+    pub outputs: &'static [BuiltinOutputPort],
+}
+
 /// `registerBuiltinType<...>("name", &ChannelType)` -- the builtins
 /// that name a channel type, in registration order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -119,6 +144,801 @@ pub const ENGINE_SIM_CONVERSIONS: &[ConversionRule] = &[
     ConversionRule { input: "StringNodeType", output: "IntNodeType", builtin: "__engine_sim__string_to_int" },
 ];
 
+pub const ENGINE_SIM_BUILTIN_PORTS: &[BuiltinPorts] = &[
+    BuiltinPorts {
+        builtin: "__engine_sim__add_crankshaft",
+        inputs: &[
+            BuiltinInputPort { name: "crankshaft", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "engine", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__add_cylinder",
+        inputs: &[
+            BuiltinInputPort { name: "connecting_rod", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "cylinder_bank", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "exhaust_system", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "ignition_wire", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "intake", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "piston", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "primary_length", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "rod_journal", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "sound_attenuation", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__add_cylinder_bank",
+        inputs: &[
+            BuiltinInputPort { name: "cylinder_bank", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "engine", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__add_gear",
+        inputs: &[
+            BuiltinInputPort { name: "ratio", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "transmission", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__add_ignition_module",
+        inputs: &[
+            BuiltinInputPort { name: "engine", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "ignition_module", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__add_lobe",
+        inputs: &[
+            BuiltinInputPort { name: "camshaft", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "centerline", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__add_rod_journal",
+        inputs: &[
+            BuiltinInputPort { name: "crankshaft", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "rod_journal", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__add_sample",
+        inputs: &[
+            BuiltinInputPort { name: "function", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "x", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "y", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__add_slave_journal",
+        inputs: &[
+            BuiltinInputPort { name: "rod", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "rod_journal", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__bool",
+        inputs: &[
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__camshaft",
+        inputs: &[
+            BuiltinInputPort { name: "advance", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "base_radius", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "lobe_profile", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__camshaft_channel",
+        inputs: &[
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__connect_ignition_wire",
+        inputs: &[
+            BuiltinInputPort { name: "angle", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "ignition_module", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "wire", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__connecting_rod",
+        inputs: &[
+            BuiltinInputPort { name: "center_of_mass", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "length", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "mass", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "moment_of_inertia", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "slave_throw", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__connecting_rod_channel",
+        inputs: &[
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__crankshaft",
+        inputs: &[
+            BuiltinInputPort { name: "flywheel_mass", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "friction_torque", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "mass", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "moment_of_inertia", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "position_x", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "position_y", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "tdc", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "throw", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__crankshaft_channel",
+        inputs: &[
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__cylinder_bank",
+        inputs: &[
+            BuiltinInputPort { name: "angle", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "bore", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "deck_height", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "display_depth", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "position_x", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "position_y", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__cylinder_bank_channel",
+        inputs: &[
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__cylinder_head",
+        inputs: &[
+            BuiltinInputPort { name: "chamber_volume", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "exhaust_port_flow", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "exhaust_runner_cross_section_area", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "exhaust_runner_volume", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "flip_display", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "intake_port_flow", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "intake_runner_cross_section_area", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "intake_runner_volume", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "valvetrain", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__cylinder_head_channel",
+        inputs: &[
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__direct_throttle_linkage",
+        inputs: &[
+            BuiltinInputPort { name: "gamma", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__engine",
+        inputs: &[
+            BuiltinInputPort { name: "dyno_hold_step", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "dyno_max_speed", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "dyno_min_speed", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "fuel", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "hf_gain", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "jitter", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "name", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "noise", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "redline", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "simulation_frequency", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "starter_speed", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "starter_torque", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "throttle", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__engine_channel",
+        inputs: &[
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__exhaust_system",
+        inputs: &[
+            BuiltinInputPort { name: "audio_volume", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "collector_cross_section_area", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "impulse_response", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "length", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "outlet_flow_rate", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "primary_flow_rate", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "primary_tube_length", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "velocity_decay", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__exhaust_system_channel",
+        inputs: &[
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__float",
+        inputs: &[
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__float_add",
+        inputs: &[
+            BuiltinInputPort { name: "__in0", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "__in1", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__float_divide",
+        inputs: &[
+            BuiltinInputPort { name: "__in0", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "__in1", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__float_multiply",
+        inputs: &[
+            BuiltinInputPort { name: "__in0", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "__in1", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__float_negate",
+        inputs: &[
+            BuiltinInputPort { name: "__in", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__float_subtract",
+        inputs: &[
+            BuiltinInputPort { name: "__in0", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "__in1", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__fuel",
+        inputs: &[
+            BuiltinInputPort { name: "burning_efficiency_randomness", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "density", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "energy_density", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "low_efficiency_attenuation", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "max_burning_efficiency", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "max_dilution_effect", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "max_turbulence_effect", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "molecular_afr", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "molecular_mass", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "name", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "turbulence_to_flame_speed_ratio", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__fuel_channel",
+        inputs: &[
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__function",
+        inputs: &[
+            BuiltinInputPort { name: "filter_radius", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__function_channel",
+        inputs: &[
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__generate_harmonic_cam_lobe",
+        inputs: &[
+            BuiltinInputPort { name: "duration_at_50_thou", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "function", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "gamma", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "lift", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "steps", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__governor",
+        inputs: &[
+            BuiltinInputPort { name: "gamma", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "k_d", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "k_s", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "max_speed", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "max_v", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "min_speed", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "min_v", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__ignition_module",
+        inputs: &[
+            BuiltinInputPort { name: "limiter_duration", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "rev_limit", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "timing_curve", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__ignition_module_channel",
+        inputs: &[
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__ignition_wire",
+        inputs: &[
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__ignition_wire_channel",
+        inputs: &[
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__impulse_response",
+        inputs: &[
+            BuiltinInputPort { name: "filename", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "volume", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__impulse_response_channel",
+        inputs: &[
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__int",
+        inputs: &[
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__int_add",
+        inputs: &[
+            BuiltinInputPort { name: "__in0", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "__in1", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__int_divide",
+        inputs: &[
+            BuiltinInputPort { name: "__in0", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "__in1", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__int_multiply",
+        inputs: &[
+            BuiltinInputPort { name: "__in0", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "__in1", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__int_negate",
+        inputs: &[
+            BuiltinInputPort { name: "__in", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__int_subtract",
+        inputs: &[
+            BuiltinInputPort { name: "__in0", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "__in1", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__int_to_float",
+        inputs: &[
+            BuiltinInputPort { name: "__in", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__int_to_string",
+        inputs: &[
+            BuiltinInputPort { name: "__in", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__intake",
+        inputs: &[
+            BuiltinInputPort { name: "idle_flow_rate", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "idle_throttle_plate_position", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "intake_flow_rate", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "molecular_afr", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "plenum_cross_section_area", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "plenum_volume", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "runner_flow_rate", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "runner_length", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "throttle_gamma", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "velocity_decay", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__intake_channel",
+        inputs: &[
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__k_28inH2O",
+        inputs: &[
+            BuiltinInputPort { name: "flow", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__k_carb",
+        inputs: &[
+            BuiltinInputPort { name: "flow", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__literal_bool",
+        inputs: &[
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__literal_float",
+        inputs: &[
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__literal_int",
+        inputs: &[
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__literal_string",
+        inputs: &[
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__piston",
+        inputs: &[
+            BuiltinInputPort { name: "blowby", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "compression_height", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "displacement", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "mass", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "wrist_pin_position", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__piston_channel",
+        inputs: &[
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__rod_journal",
+        inputs: &[
+            BuiltinInputPort { name: "angle", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__rod_journal_channel",
+        inputs: &[
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__set_application_settings",
+        inputs: &[
+            BuiltinInputPort { name: "boost_units", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "color_background", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "color_blue", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "color_foreground", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "color_green", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "color_highlight1", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "color_highlight2", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "color_orange", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "color_pink", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "color_red", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "color_shadow", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "color_yellow", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "power_units", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "pressure_units", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "speed_units", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "start_fullscreen", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "torque_units", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__set_cylinder_head",
+        inputs: &[
+            BuiltinInputPort { name: "bank", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "head", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__set_engine",
+        inputs: &[
+            BuiltinInputPort { name: "engine", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__set_transmission",
+        inputs: &[
+            BuiltinInputPort { name: "transmission", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__set_vehicle",
+        inputs: &[
+            BuiltinInputPort { name: "vehicle", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__standard_valvetrain",
+        inputs: &[
+            BuiltinInputPort { name: "exhaust_camshaft", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "intake_camshaft", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__string",
+        inputs: &[
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__string_add",
+        inputs: &[
+            BuiltinInputPort { name: "__in0", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "__in1", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__string_to_int",
+        inputs: &[
+            BuiltinInputPort { name: "__in", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__throttle_channel",
+        inputs: &[
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__transmission",
+        inputs: &[
+            BuiltinInputPort { name: "max_clutch_torque", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__transmission_channel",
+        inputs: &[
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__valvetrain_channel",
+        inputs: &[
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__vehicle",
+        inputs: &[
+            BuiltinInputPort { name: "cross_sectional_area", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "diff_ratio", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "drag_coefficient", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "mass", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "rolling_resistance", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "tire_radius", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__vehicle_channel",
+        inputs: &[
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__engine_sim__vtec_valvetrain",
+        inputs: &[
+            BuiltinInputPort { name: "exhaust_camshaft", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "intake_camshaft", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "manifold_vacuum", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "min_rpm", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "min_speed", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "min_throttle_position", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "vtec_exhaust_camshaft", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "vtec_intake_camshaft", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+];
+
 pub const PIRANHA_BUILTIN_CHANNEL_TYPES: &[BuiltinChannelType] = &[
     BuiltinChannelType { builtin: "__piranha__int", channel_type: "IntNodeType" },
     BuiltinChannelType { builtin: "__piranha__float", channel_type: "FloatNodeType" },
@@ -173,5 +993,350 @@ pub const PIRANHA_CONVERSIONS: &[ConversionRule] = &[
     ConversionRule { input: "StringNodeType", output: "FloatNodeType", builtin: "__piranha__string_to_float" },
     ConversionRule { input: "FloatNodeType", output: "StringNodeType", builtin: "__piranha__float_to_string" },
     ConversionRule { input: "IntNodeType", output: "FloatNodeType", builtin: "__piranha__int_to_float" },
+];
+
+pub const PIRANHA_BUILTIN_PORTS: &[BuiltinPorts] = &[
+    BuiltinPorts {
+        builtin: "__piranha__bool",
+        inputs: &[
+            BuiltinInputPort { name: "__in", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "w", alias: false },
+            BuiltinOutputPort { name: "x", alias: false },
+            BuiltinOutputPort { name: "y", alias: false },
+            BuiltinOutputPort { name: "z", alias: false },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__piranha__bool_negate",
+        inputs: &[
+            BuiltinInputPort { name: "__in", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__piranha__console_in",
+        inputs: &[
+            BuiltinInputPort { name: "prompt", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "raw_input", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__piranha__console_out",
+        inputs: &[
+            BuiltinInputPort { name: "data", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__piranha__float",
+        inputs: &[
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__piranha__float_add",
+        inputs: &[
+            BuiltinInputPort { name: "__in0", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "__in1", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__piranha__float_divide",
+        inputs: &[
+            BuiltinInputPort { name: "__in0", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "__in1", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__piranha__float_multiply",
+        inputs: &[
+            BuiltinInputPort { name: "__in0", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "__in1", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__piranha__float_negate",
+        inputs: &[
+            BuiltinInputPort { name: "__in", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__piranha__float_positive",
+        inputs: &[
+            BuiltinInputPort { name: "__in", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__piranha__float_subtract",
+        inputs: &[
+            BuiltinInputPort { name: "__in0", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "__in1", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__piranha__float_to_string",
+        inputs: &[
+            BuiltinInputPort { name: "__in", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__piranha__int",
+        inputs: &[
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__piranha__int_add",
+        inputs: &[
+            BuiltinInputPort { name: "__in0", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "__in1", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__piranha__int_divide",
+        inputs: &[
+            BuiltinInputPort { name: "__in0", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "__in1", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__piranha__int_multiply",
+        inputs: &[
+            BuiltinInputPort { name: "__in0", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "__in1", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__piranha__int_negate",
+        inputs: &[
+            BuiltinInputPort { name: "__in", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__piranha__int_positive",
+        inputs: &[
+            BuiltinInputPort { name: "__in", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__piranha__int_probe",
+        inputs: &[
+            BuiltinInputPort { name: "__in", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__piranha__int_subtract",
+        inputs: &[
+            BuiltinInputPort { name: "__in0", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "__in1", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__piranha__int_to_float",
+        inputs: &[
+            BuiltinInputPort { name: "__in", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__piranha__literal_bool",
+        inputs: &[
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__piranha__literal_float",
+        inputs: &[
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__piranha__literal_int",
+        inputs: &[
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__piranha__literal_string",
+        inputs: &[
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__piranha__string",
+        inputs: &[
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__piranha__string_add",
+        inputs: &[
+            BuiltinInputPort { name: "__in0", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "__in1", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__piranha__string_to_float",
+        inputs: &[
+            BuiltinInputPort { name: "__in", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__piranha__throw_runtime_error",
+        inputs: &[
+            BuiltinInputPort { name: "throw", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__piranha__vector",
+        inputs: &[
+            BuiltinInputPort { name: "__in", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "w", alias: false },
+            BuiltinOutputPort { name: "x", alias: false },
+            BuiltinOutputPort { name: "y", alias: false },
+            BuiltinOutputPort { name: "z", alias: false },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__piranha__vector_add",
+        inputs: &[
+            BuiltinInputPort { name: "__in0", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "__in1", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__piranha__vector_constructor",
+        inputs: &[
+            BuiltinInputPort { name: "__in0", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "__in1", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "__in2", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "__in3", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__piranha__vector_divide",
+        inputs: &[
+            BuiltinInputPort { name: "__in0", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "__in1", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__piranha__vector_multiply",
+        inputs: &[
+            BuiltinInputPort { name: "__in0", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "__in1", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__piranha__vector_negate",
+        inputs: &[
+            BuiltinInputPort { name: "__in", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__piranha__vector_positive",
+        inputs: &[
+            BuiltinInputPort { name: "__in", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
+    BuiltinPorts {
+        builtin: "__piranha__vector_subtract",
+        inputs: &[
+            BuiltinInputPort { name: "__in0", modifies_input: false, toggle: false },
+            BuiltinInputPort { name: "__in1", modifies_input: false, toggle: false },
+        ],
+        outputs: &[
+            BuiltinOutputPort { name: "__out", alias: true },
+        ],
+    },
 ];
 
