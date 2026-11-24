@@ -104,8 +104,8 @@ pub enum Value {
     Str { value: String },
     Label { token: Token },
     NodeRef { node: Box<Node> },
-    Binary { op: BinOp, left: Box<Value>, right: Box<Value> },
-    Unary { op: UnOp, operand: Box<Value> },
+    Binary { token: Token, op: BinOp, left: Box<Value>, right: Box<Value> },
+    Unary { token: Token, op: UnOp, operand: Box<Value> },
 }
 
 /// `piranha::IrAttribute`: a named or positional argument of a node.

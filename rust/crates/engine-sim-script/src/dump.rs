@@ -80,7 +80,7 @@ fn write_value(text: &mut String, lines: bool, value: &Value) {
             write_node(text, lines, node);
             text.push(')');
         }
-        Value::Binary { op, left, right } => {
+        Value::Binary { token, op, left, right } => {
             let name = match op {
                 BinOp::Dot => "dot",
                 BinOp::Add => "add",
@@ -89,12 +89,16 @@ fn write_value(text: &mut String, lines: bool, value: &Value) {
                 BinOp::Div => "div",
             };
             text.push_str(&format!("(bin {} ", name));
+            if lines {
+                write_token(text, lines, token);
+                text.push(' ');
+            }
             write_value(text, lines, left);
             text.push(' ');
             write_value(text, lines, right);
             text.push(')');
         }
-        Value::Unary { op, operand } => {
+        Value::Unary { token, op, operand } => {
             let name = match op {
                 UnOp::Default => "default",
                 UnOp::NumericNegate => "neg",
@@ -102,6 +106,10 @@ fn write_value(text: &mut String, lines: bool, value: &Value) {
                 UnOp::Positive => "pos",
             };
             text.push_str(&format!("(un {} ", name));
+            if lines {
+                write_token(text, lines, token);
+                text.push(' ');
+            }
             write_value(text, lines, operand);
             text.push(')');
         }

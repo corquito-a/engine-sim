@@ -303,24 +303,42 @@ static IrValue *buildValue(const sx::Node &form) {
 
     if (head == "bin") {
         const std::string &op = form.items[1].atom;
+        // `(bin add (tok "+" 1 26) l r)` when the dump carries lines.
+        const bool withToken = form.items[2].isList;
+        const int valueBase = withToken ? 3 : 2;
         IrBinaryOperator::Operator operation = IrBinaryOperator::Operator::Dot;
         if (op == "add") operation = IrBinaryOperator::Operator::Add;
         else if (op == "sub") operation = IrBinaryOperator::Operator::Sub;
         else if (op == "mul") operation = IrBinaryOperator::Operator::Mul;
         else if (op == "div") operation = IrBinaryOperator::Operator::Div;
 
-        return new IrBinaryOperator(
-            operation, buildValue(form.items[2]), buildValue(form.items[3]));
+        IrBinaryOperator *binary = new IrBinaryOperator(
+            operation, buildValue(form.items[valueBase]), buildValue(form.items[valueBase + 1]));
+
+        if (withToken) {
+            binary->m_summaryToken = buildToken(form.items[2]);
+        }
+
+        return binary;
     }
 
     if (head == "un") {
         const std::string &op = form.items[1].atom;
+        const bool withToken = form.items[2].isList;
+        const int valueBase = withToken ? 3 : 2;
         IrUnaryOperator::Operator operation = IrUnaryOperator::Operator::Default;
         if (op == "neg") operation = IrUnaryOperator::Operator::NumericNegate;
         else if (op == "not") operation = IrUnaryOperator::Operator::BoolNegate;
         else if (op == "pos") operation = IrUnaryOperator::Operator::Positive;
 
-        return new IrUnaryOperator(operation, buildValue(form.items[2]));
+        IrUnaryOperator *unary =
+            new IrUnaryOperator(operation, buildValue(form.items[valueBase]));
+
+        if (withToken) {
+            unary->m_summaryToken = buildToken(form.items[2]);
+        }
+
+        return unary;
     }
 
     std::fprintf(stderr, "ir dump: unknown value form '%s'\n", head.c_str());

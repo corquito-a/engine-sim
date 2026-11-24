@@ -568,9 +568,15 @@ impl Parser {
                 Kind::Minus => BinOp::Sub,
                 _ => break,
             };
+            // The operator's own token: `IrBinaryOperator` keeps it as its
+            // summary token, which is where the original reports
+            // `InvalidOperandTypes` from.
+            let token = ir_token(self.peek());
             self.bump();
             let right = self.mul_exp()?;
-            value = Value::Binary { op, left: Box::new(value), right: Box::new(right) };
+            value = Value::Binary {
+                token, op, left: Box::new(value), right: Box::new(right),
+            };
         }
 
         Ok(value)
@@ -585,9 +591,12 @@ impl Parser {
                 Kind::Slash => BinOp::Div,
                 _ => break,
             };
+            let token = ir_token(self.peek());
             self.bump();
             let right = self.unary_exp()?;
-            value = Value::Binary { op, left: Box::new(value), right: Box::new(right) };
+            value = Value::Binary {
+                token, op, left: Box::new(value), right: Box::new(right),
+            };
         }
 
         Ok(value)
@@ -604,10 +613,11 @@ impl Parser {
             _ => return self.data_access(),
         };
 
+        let token = ir_token(self.peek());
         self.bump();
         let operand = self.data_access()?;
 
-        Ok(Value::Unary { op, operand: Box::new(operand) })
+        Ok(Value::Unary { token, op, operand: Box::new(operand) })
     }
 
     /// `data_access : primary_exp ('.' label_value | '.' inline_node)*`
@@ -635,9 +645,11 @@ impl Parser {
             }
 
             if self.kind_at(1) == Kind::Label {
+                let token = ir_token(self.peek());
                 self.bump(); // '.'
                 let label = self.bump();
                 value = Value::Binary {
+                    token,
                     op: BinOp::Dot,
                     left: Box::new(value),
                     right: Box::new(Value::Label { token: ir_token(&label) }),
