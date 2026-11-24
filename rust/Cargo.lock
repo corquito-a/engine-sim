@@ -5,3 +5,7 @@ version = 4
 [[package]]
 name = "engine-sim-core"
 version = "0.1.0"
+
+[[package]]
+name = "engine-sim-script"
+version = "0.1.0"
