@@ -9,7 +9,7 @@
 /// `piranha::IrTokenInfo`: a token plus its source location and the
 /// `specified` / `empty` flags the original uses to tell "the author wrote
 /// nothing here" from "the author wrote an empty string".
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Token {
     pub data: String,
     /// False for default-constructed tokens (`IrTokenInfo()`).
@@ -19,6 +19,20 @@ pub struct Token {
     pub line: u32,
     pub col: u32,
 }
+
+/// Identity is the text and the flags: `line`/`col` are diagnostic metadata
+/// that the IR itself never compares, so two tokens with the same text compare
+/// equal wherever they were written. The dump compares positions explicitly
+/// when it is asked to carry them.
+impl PartialEq for Token {
+    fn eq(&self, other: &Self) -> bool {
+        self.data == other.data
+            && self.specified == other.specified
+            && self.empty == other.empty
+    }
+}
+
+impl Eq for Token {}
 
 impl Token {
     /// A token the parser synthesised, equivalent to `IrTokenInfo_string(data)`

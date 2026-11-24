@@ -30,6 +30,7 @@ pub mod validate;
 pub use builtin_types::builtin_channel_type;
 pub use channel_type::{ChannelType, ChannelTypeRegistry};
 pub use context::{ContextArena, ContextId};
+pub use builtin_types::Rules;
 pub use dump::{dump_unit, dump_units, dump_units_with};
 pub use error::{CompilationError, ErrorCode, ErrorList};
 pub use ir::*;

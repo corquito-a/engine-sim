@@ -252,7 +252,7 @@ impl Arena {
             return;
         }
 
-        if !crate::builtin_types::is_builtin_node_type(&builtin_token.data) {
+        if !self.rules.is_builtin_node_type(&builtin_token.data) {
             let mut location = builtin_token;
             location.specified = true;
             self.errors.push(crate::error::CompilationError::new(

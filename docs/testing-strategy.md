@@ -364,3 +364,40 @@ Three findings, all of them the kind that only a conformance suite produces:
 
 Both open items are now gated by fixtures rather than by memory, which is the
 point of Tier 1: the suite is not a score, it is a to-do list with line numbers.
+
+## The conformance report (first full run)
+
+`python3 rust/tools/parity/run_conformance.py --summary`, over all 113 fixtures:
+
+```
+DIFF 54, MATCH 40, PARSE 19
+```
+
+40 fixtures already reproduce the reference's `(code, line)` list exactly. The
+54 disagreements group by missing code, which is the to-do list:
+
+| Code | Meaning | Missing | Phase it belongs to |
+|---|---|---|---|
+| `R0010` | undefined node type | 29 | resolution (unexpected -- needs triage) |
+| `R0060` | undefined member | 19 | reference chain |
+| `R0050` | unresolved reference | 18 | reference chain |
+| `E0010` | invalid operand types | 9 | operator expansion |
+| `T0010`/`T0011` | type errors | 5 / 4 | `checkTypes` |
+| `R0080` | circular reference | 3 | `expandChain` loop guard |
+| `V0080`/`V0081` | undefined builtin input/output | 1 / 1 | `validateBuiltinMappings` (known) |
+| `E0020`, `R0061`, `V0010`, `V0011`, `V0040`, `R0020`, `R0030`, `R0040` | assorted | 1-3 each | mixed, triage per fixture |
+
+`R0010` at 29 is the surprise: resolution was thought complete (660/660 and
+701/701 resolved rows), so either the fixtures resolve through a path the corpus
+never uses, or the corpus's rows are not sensitive to it. That is exactly the
+kind of thing a conformance suite is for, and it is the first thing to look at.
+
+`PARSE` 19 is the parser's own to-do list -- files the original accepts and this
+parser rejects. They cannot use the oracle (no dump exists if the parse fails),
+so they are compared against the gtest literals directly.
+
+Supporting pieces added with the report: `Rules::{EngineSim, Piranha}` on the
+arena (selectable through `error_dump --rules=piranha`), the 37-name
+`PIRANHA_BUILTIN_NODE_TYPES` table, and a test that rescans `test_rules.cpp`
+and fails if the table and the source disagree -- transcription checked against
+its origin rather than trusted.

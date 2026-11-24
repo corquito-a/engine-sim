@@ -170,6 +170,9 @@ pub struct Arena {
     /// `IrCompilationUnit::addCompilationError` -- resolution and validation
     /// report through the unit, collected here in discovery order.
     pub(crate) errors: Vec<CompilationError>,
+    /// Which `LanguageRules` to consult. Defaults to the engine's own, which is
+    /// what every existing caller wants.
+    pub(crate) rules: crate::builtin_types::Rules,
 }
 
 impl Arena {
@@ -276,6 +279,15 @@ impl Arena {
         self.units.push(unit_id);
 
         unit_id
+    }
+
+    /// Selects the rule set (`IrCompilationUnit::setRules`).
+    pub fn set_rules(&mut self, rules: crate::builtin_types::Rules) {
+        self.rules = rules;
+    }
+
+    pub fn rules(&self) -> crate::builtin_types::Rules {
+        self.rules
     }
 
     pub fn errors(&self) -> &[CompilationError] {
