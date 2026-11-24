@@ -175,7 +175,7 @@ existing `reference.patch` concessions.
 |---|---|---|---|
 | M0 | Reference scaffolding: `parser.auto.h` stub (A4), Boost→`std::filesystem`, build `piranha` + `es_script` + a driver that loads a JSON IR dump, dumps `EngineContext`, and logs mutations | the driver reproduces the TRX520 fixture from a dump the *Rust* parser produces | no user input needed |
 | M1 | Rust: scanner + parser + IR structures (`engine-sim-script` crate, dependency-free) | all 18 `es/` + 40 `assets/` files parse clean; accept/reject differential vs A2 | ~1 500 lines |
-| M2 | Rust: IR resolution + validation (types, defaults, visibility, aliasing, inlining, `=>`) | per-attribute type/value dump equals reference for all assets | ~1 500 lines |
+| M2 | Rust: IR resolution + validation (types, defaults, visibility, aliasing, inlining, `=>`) | per-attribute type/value dump equals reference for all assets | ~1 500 lines; split into M2a (substrate), M2b (resolution), M2c (validation + type dump) — see §8.3 |
 | M3 | Rust: node graph + execution (`Node`, `NodeOutput`, `Channel`, `NodeProgram`, allocator) | mutation-log sequence equals reference | ~1 200 lines |
 | M4 | Rust: `es_script` bindings + `EngineContext` → `Engine` construction in `engine-sim-core` | G2 (full trace + audio) for **all** engine assets, fixture retired | ~2 500 lines, the largest chunk |
 | M5 | WAV impulse responses (`es/sound-library/*.wav`) + `impulse_response_library` | decoded samples bitwise equal; audio matches with the real IR | ~300 lines |
@@ -188,7 +188,10 @@ Each milestone is independently verifiable, and M0 is what unblocks everything.
 |---|---|---|
 | M0 | ✅ | `tools/parity/stage_script_reference.sh` stages and compiles `piranha` + `es_script` (`/tmp/refscript/librefscript.a`) with the parser removed; `tools/parity/script_reference.cpp` injects the IR and drives the real pipeline |
 | M1 | ✅ | `crates/engine-sim-script` (`lexer`, `ir`, `parser`, `dump`, `resolve`), dependency-free, 27 tests |
-| M2–M5 | ⬜ | unchanged |
+| M2a | ✅ | `lower` (parse tree → arena), `channel_type`, `error`; every unit of both entry points lowers and raises back field-for-field; 95 tests |
+| M2b | ◐ | done: `resolveName`/`resolveLocalName` (scope walk, unit symbols, node attributes, definition ports/body, definition-local-only), `countSymbolIncidence`, `IrContextTree` (`context.rs`: chains, `isEqual`, `isOutside`, `hasParent`, `findContext`, `getMain`/`getRoot`, `resolveDefinition`). Pending: `IrReferenceChain`/`IrReferenceQuery`/`IrReferenceInfo`, `getImmediateReference` per structure, `_resolveDefinitions` |
+| M2c | ⬜ | `_checkReferences`, `_checkTypes`, `_checkInstantiation`, `_validate`; target recorded — `script_reference --resolved` writes it, `fixtures/*.resolved` hold it |
+| M3–M5 | ⬜ | unchanged |
 
 Two deviations from the plan, both forced by the missing toolchain:
 
@@ -208,6 +211,59 @@ Two deviations from the plan, both forced by the missing toolchain:
   from it (`--run assets/main.mr`: 16 263 engine and trace checkpoints,
   recorded in `rust/crates/engine-sim-script/fixtures/main_engine.trace`).
   That recorded trace is the G2 target M4 has to hit.
+
+### 8.3 M2's shape: why the IR is lowered into an arena
+
+M2 is not a leaf-to-root walk over the parse tree. piranha resolves *in place*
+and every phase is driven by state that a pure tree cannot express:
+
+* mutable per-structure fields (`IrNode::m_definition`,
+  `IrAttributeDefinition::m_typeDefinition`, `IrNode::m_builtinInfo`);
+* identity comparison — circular-reference detection pushes
+  `(structure, context)` pairs onto a set, and `IrContextTree` nodes are
+  compared by pointer;
+* memoisation flags (`m_definitionsResolved`, `m_expanded`, `m_typesChecked`,
+  `m_instantiationChecked`, `m_validated`), so a shared definition is resolved
+  once and reused;
+* a traversal order given by `registerComponent`, which is *not* the parse
+  order (an `auto node` instance is registered before its definition; a
+  definition registers its port list before its body).
+
+The three options considered:
+
+* **A — mutate the parse tree in place.** Impossible for the identity and
+  memoisation requirements without `Rc<RefCell<_>>` everywhere, which is the
+  same thing as an arena with worse ergonomics.
+* **B — lower into a flat arena of `StructureId`s and work there.** Every
+  structure keeps the `IrParserStructure` fields (parent, scope parent, logical
+  parent, summary token, visibility, stage flags) plus a `Kind` payload whose
+  component list reproduces `registerComponent` order exactly.
+* **C — rebuild resolution on immutable data with side tables.** Least faithful:
+  the reference chain's early-out behaviour (an `IrAttributeDefinition` with a
+  fixed type stops a chain) and the instantiation-context propagation are
+  emergent properties of the mutable graph, not of a declarative spec, so a
+  rewrite would drift where the gate cannot see it.
+
+**B chosen.** The parse tree stays untouched — it is what the M1 oracle bridge
+and the dump consume, and it is already verified — and `Arena::to_unit` raises
+the arena back so the lowering itself is checkable: `tests/lower_tests.rs`
+lowers all 18 standard-library units and all 21 asset units and asserts
+`to_unit(lower(unit)) == unit` field for field (tokens and their source
+locations included). Measured sizes: 253 nodes / 653 attributes / 641 ports
+(`es/engine_sim.mr`), 409 / 1 026 / 677 (`assets/main.mr`).
+
+The reference dump for M2c already exists: `script_reference --resolved` prints
+the original's own resolution output — per port, the direction, alias flag, the
+node definition the declared type resolved to and the channel type it produced;
+per unit-level attribute, the port it resolved to (660 rows for
+`es/engine_sim.mr`, 701 for `assets/main.mr`, recorded into
+`crates/engine-sim-script/fixtures/*.resolved` by `RECORD_RESOLVED=1`). Nothing
+compares the Rust side against it yet, so it is a recorded target, not a gate.
+
+The measured round-trip is the gate for the substrate only. M2b/M2c still owe
+the differential gate: a per-attribute dump of the *resolved* type and value,
+compared against `script_reference` running the real `resolve` + `validate`
+over the same units.
 
 ### 8.2 The IR dump
 

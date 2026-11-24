@@ -6,18 +6,28 @@
 //! produce -- with no dependencies, so it can be verified against the C++
 //! original byte for byte.
 //!
-//! The IR types in [`ir`] mirror the piranha classes one for one; later
-//! milestones (definition resolution, node graph construction, `EngineContext`
-//! bindings) build on them.
+//! The IR types in [`ir`] mirror the piranha classes one for one. Everything
+//! after parsing works on [`lower`], which turns that tree into an
+//! identity-preserving arena -- the shape piranha's in-place resolution and
+//! pointer-identity checks actually need.
 
+pub mod channel_type;
+pub mod context;
 pub mod dump;
+pub mod error;
 pub mod ir;
 pub mod lexer;
+pub mod lower;
+pub mod name;
 pub mod parser;
 pub mod resolve;
 
+pub use channel_type::{ChannelType, ChannelTypeRegistry};
+pub use context::{ContextArena, ContextId};
 pub use dump::{dump_unit, dump_units};
+pub use error::{CompilationError, ErrorCode, ErrorList};
 pub use ir::*;
 pub use lexer::{tokenize, Kind, Literal, Scanner, Token as LexToken};
 pub use parser::{parse_unit, ParseError, Parser};
+pub use lower::{Arena, StructureId};
 pub use resolve::{load, LoadError};
