@@ -28,6 +28,7 @@ Motivation and estimates: [`docs/rust-port-assessment.md`](../docs/rust-port-ass
 | `dsp` (low pass, Butterworth f32/f64, derivative, delay, convolution, leveling, jitter, `<random>` compat) | `src/*_filter.cpp`, `delta-studio`'s `convolve.h` | ✅ done | bit-exact (filter harness) |
 | `synth` (input resampling, impulse response, render/mix, int16 out) | `src/synthesizer.cpp` | ✅ done | bit-exact (filter harness + whole-core incl. audio) |
 | `script` front end (`.mr` scanner, parser, IR) | `piranha/flex-bison/*`, `include/ir_*.h` | ✅ done | IR round trip through the original piranha objects, 58 scripts |
+| `script` IR substrate (`lower` arena, `channel_type`, `error`) | `include/ir_*.h`, `channel_type`, `compilation_error` | ✅ done | every unit lowers and raises back field-for-field |
 | `script` resolution / validation / node graph | `piranha/src/ir_*.cpp`, `node_graph.cpp` | ⬜ | — |
 | `scripting/` bindings (`EngineContext` → `Engine`) | `scripting/` | ⬜ | — |
 | app shell (window/render/UI/audio out) | `delta-studio` | ⬜ | — |
@@ -100,7 +101,7 @@ present.
 ```bash
 cd rust
 cargo build --all-targets     # no warnings
-cargo test                    # 16 unit + 13 gas + 4 end-to-end + 27 script = 60 tests
+cargo test                    # 16 unit + 13 gas + 4 end-to-end + 48 script = 81 tests
 cargo test --release
 ./tools/parity/run_core_parity.sh 200000   # 8 964 002 bit-identical checkpoints
 ```
@@ -291,7 +292,12 @@ the reference's audio thread, so PCM output is reproducible.
    * **M2 — resolution and validation.** Types, default values, visibility,
      aliasing, `inline`, `=>` shadowing. The oracle already runs these stages on
      the Rust IR (`script_reference --check`), so this milestone can be checked
-     stage by stage rather than only at the end.
+     stage by stage rather than only at the end. The substrate is done
+     (`src/lower.rs`: parse tree → identity-preserving arena, because piranha
+     resolves in place and compares structures by identity; see
+     `docs/mr-interpreter-plan.md` §8.3), as are `src/channel_type.rs` and
+     `src/error.rs`. Next: `IrContextTree` + `resolveName`/`resolveLocalName`,
+     then the reference chain, `_checkTypes` and `_validate`.
    * **M3 — node graph and execution** (`Node`, `NodeOutput`, `Channel`,
      `NodeProgram`, allocator, the mutation log). The original executes nodes in
      `NodeContainer` order and never calls `NodeProgram::optimize()` — the
@@ -305,6 +311,22 @@ the reference's audio thread, so PCM output is reproducible.
    * **M5 — the `.wav` impulse responses** in `es/sound-library/`.
 2. **App shell** (window, render, UI, audio output) last; it is where the port
    can finally diverge from the C++ without losing fidelity.
+
+## The `.mr` IR substrate
+
+`lower.rs` turns the parse tree into an arena of `StructureId`s. piranha resolves
+in place and keys several algorithms on pointer identity, so a tree cannot carry
+it; the arena keeps `IrParserStructure`'s fields (parent, scope parent, logical
+parent, summary token, visibility, stage flags) and reproduces
+`registerComponent` order exactly. `Arena::to_unit` raises it back, and
+`tests/lower_tests.rs` asserts `to_unit(lower(unit)) == unit` for all 18
+standard-library and all 21 asset units — 253/653/641 and 409/1026/677
+nodes/attributes/ports respectively.
+
+`channel_type.rs` is `piranha::ChannelType` (name, parent chain, byte-sum hash,
+`isCompatibleWith`) plus the registry that interns types; `error.rs` is the
+whole `ErrorCode` table (`compilation_error.cpp`) with the exact stage/code/info
+strings, since those land in `error_log.log`.
 
 ## The `.mr` front end
 
