@@ -30,7 +30,7 @@ Motivation and estimates: [`docs/rust-port-assessment.md`](../docs/rust-port-ass
 | `script` front end (`.mr` scanner, parser, IR) | `piranha/flex-bison/*`, `include/ir_*.h` | ✅ done | IR round trip through the original piranha objects, 58 scripts |
 | `script` IR substrate (`lower` arena, `channel_type`, `error`) | `include/ir_*.h`, `channel_type`, `compilation_error` | ✅ done | every unit lowers and raises back field-for-field |
 | `script` resolution (definitions, types, attributes) | `piranha/src/ir_*.cpp` | ✅ done | 660/660 + 701/701 rows identical to the reference |
-| `script` validation (reported errors) | `piranha/src/ir_*.cpp` | ✅ done | 12 negative fixtures reproduce the reference's exact code multiset |
+| `script` validation (reported errors) | `piranha/src/ir_*.cpp` | ✅ done | 13 negative fixtures reproduce the reference's exact code multiset |
 | `script` references / expansion / type checks / node graph | `piranha/src/ir_*.cpp`, `node_graph.cpp` | ⬜ | — |
 | `scripting/` bindings (`EngineContext` → `Engine`) | `scripting/` | ⬜ | — |
 | app shell (window/render/UI/audio out) | `delta-studio` | ⬜ | — |
@@ -103,7 +103,7 @@ present.
 ```bash
 cd rust
 cargo build --all-targets     # no warnings
-cargo test                    # 16 unit + 13 gas + 4 end-to-end + 82 script = 115 tests
+cargo test                    # 16 unit + 13 gas + 4 end-to-end + 84 script = 117 tests
 cargo test --release
 ./tools/parity/run_core_parity.sh 200000   # 8 964 002 bit-identical checkpoints
 ```

@@ -232,6 +232,34 @@ impl Arena {
                     .push(crate::error::CompilationError::new(token, ErrorCode::SymbolUsedMultipleTimes));
             }
         }
+
+        self.validate_builtin_mapping(definition);
+    }
+
+    /// The first half of `IrNodeDefinition::validateBuiltinMappings`: the
+    /// builtin name has to be one the language rules registered. The second
+    /// half -- comparing the definition's ports against the builtin's reference
+    /// node (`V0080`/`V0081`/`V0090`/`V0100`/`V0110`) -- needs the reference
+    /// node's port list, which the Rust side does not have yet, so those checks
+    /// are not ported.
+    fn validate_builtin_mapping(&mut self, definition: StructureId) {
+        let (is_builtin, builtin_token) = match self.kind(definition) {
+            Kind::NodeDefinition(data) => (data.defines_builtin, data.builtin_name.clone()),
+            _ => return,
+        };
+
+        if !is_builtin {
+            return;
+        }
+
+        if !crate::builtin_types::is_builtin_node_type(&builtin_token.data) {
+            let mut location = builtin_token;
+            location.specified = true;
+            self.errors.push(crate::error::CompilationError::new(
+                location,
+                ErrorCode::UndefinedBuiltinType,
+            ));
+        }
     }
 
     /// `IrNodeDefinition::countSymbolIncidence` -- ports and body nodes share

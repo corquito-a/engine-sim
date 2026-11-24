@@ -108,5 +108,5 @@ fn negative_scripts_report_the_reference_errors() {
         checked += 1;
     }
 
-    assert_eq!(checked, 12, "every negative fixture is checked");
+    assert_eq!(checked, 13, "every negative fixture is checked");
 }
