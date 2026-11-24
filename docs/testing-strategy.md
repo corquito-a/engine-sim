@@ -551,3 +551,26 @@ So the phase stays opt-in until expansion lands. This is the useful kind of
 negative result: it says the machinery is structurally right (R0061 matches
 line-for-line, most R0050/R0060 land on the right line) and that the *only*
 thing between it and the gate is expansion, not more reference logic.
+
+---
+
+## The language rules are generated, not transcribed
+
+Expansion asks the rules four questions -- which builtin node stands behind a
+literal, behind `left op right`, behind a unary operator, and behind a
+conversion -- and the answers are 4 + 12 + 2 + 3 calls in
+`scripting/src/language_rules.cpp` and 4 + 17 + 7 + 3 in
+`piranha/test/test_rules.cpp`.
+
+`rust/tools/parity/extract_language_rules.py` parses those two files and writes
+`src/language_rules.rs`; every call site has to produce exactly one row, so a
+parse that stops early fails instead of writing a short table.
+`tests/language_rules_tests.rs` then re-derives both tables from the C++ with an
+independent parser and compares them row for row -- the same guard the
+builtin-node table uses, and the reason `--check` has a second caller in CI.
+
+Two details of the lookup that the table has to respect:
+`resolveOperatorBuiltinType` returns `""` when *either* operand type is null
+(unlike `checkConversion`, which returns false), and the probe is not
+reversible, so `float * int` and `int * float` are different questions -- the
+es rules answer the first and not the second.

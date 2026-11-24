@@ -12,6 +12,9 @@
 //! Builtins registered without a channel type have no entry here: their
 //! `BuiltinTypeInfo::nodeType` is null, so the original reports no type either.
 
+use crate::ir::{BinOp, UnOp};
+use crate::language_rules::LiteralKind;
+
 /// `LanguageRules::resolveChannelType`
 pub fn builtin_channel_type(builtin_name: &str) -> Option<&'static str> {
     BUILTIN_CHANNEL_TYPES
@@ -212,6 +215,79 @@ impl Rules {
             Rules::EngineSim => is_builtin_node_type(name),
             Rules::Piranha => piranha_is_builtin_node_type(name),
         }
+    }
+
+    /// `LanguageRules::resolveLiteralBuiltinType` -- which builtin node stands
+    /// behind a literal of this type.
+    pub fn literal_builtin(self, literal: LiteralKind) -> Option<&'static str> {
+        let table = match self {
+            Rules::EngineSim => crate::language_rules::ENGINE_SIM_LITERALS,
+            Rules::Piranha => crate::language_rules::PIRANHA_LITERALS,
+        };
+
+        table.iter().find(|rule| rule.literal == literal).map(|rule| rule.builtin)
+    }
+
+    /// `LanguageRules::resolveOperatorBuiltinType`.
+    ///
+    /// A null operand type has no rule, and the lookup is not reversible: the
+    /// rule's own left/right order is what has to match.
+    pub fn operator_builtin(
+        self,
+        op: BinOp,
+        left: Option<&str>,
+        right: Option<&str>,
+    ) -> Option<&'static str> {
+        let (left, right) = (left?, right?);
+
+        let table = match self {
+            Rules::EngineSim => crate::language_rules::ENGINE_SIM_OPERATORS,
+            Rules::Piranha => crate::language_rules::PIRANHA_OPERATORS,
+        };
+
+        table
+            .iter()
+            .find(|rule| rule.op == op && rule.left == left && rule.right == right)
+            .map(|rule| rule.builtin)
+    }
+
+    /// `LanguageRules::resolveUnaryOperatorBuiltinType`.
+    pub fn unary_builtin(self, op: UnOp, type_name: Option<&str>) -> Option<&'static str> {
+        let type_name = type_name?;
+
+        let table = match self {
+            Rules::EngineSim => crate::language_rules::ENGINE_SIM_UNARY,
+            Rules::Piranha => crate::language_rules::PIRANHA_UNARY,
+        };
+
+        table
+            .iter()
+            .find(|rule| rule.op == op && rule.type_name == type_name)
+            .map(|rule| rule.builtin)
+    }
+
+    /// `LanguageRules::resolveConversionBuiltinType`.
+    pub fn conversion_builtin(
+        self,
+        input: Option<&str>,
+        output: Option<&str>,
+    ) -> Option<&'static str> {
+        let (input, output) = (input?, output?);
+
+        let table = match self {
+            Rules::EngineSim => crate::language_rules::ENGINE_SIM_CONVERSIONS,
+            Rules::Piranha => crate::language_rules::PIRANHA_CONVERSIONS,
+        };
+
+        table
+            .iter()
+            .find(|rule| rule.input == input && rule.output == output)
+            .map(|rule| rule.builtin)
+    }
+
+    /// `LanguageRules::checkConversion`
+    pub fn check_conversion(self, input: Option<&str>, output: Option<&str>) -> bool {
+        self.conversion_builtin(input, output).is_some()
     }
 }
 

@@ -19,6 +19,7 @@ pub mod definitions;
 pub mod dump;
 pub mod error;
 pub mod ir;
+pub mod language_rules;
 pub mod lexer;
 pub mod lower;
 pub mod name;
