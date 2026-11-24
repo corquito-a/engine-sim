@@ -182,6 +182,57 @@ existing `reference.patch` concessions.
 
 Each milestone is independently verifiable, and M0 is what unblocks everything.
 
+### 8.1 Status
+
+| # | State | What actually shipped |
+|---|---|---|
+| M0 | ✅ | `tools/parity/stage_script_reference.sh` stages and compiles `piranha` + `es_script` (`/tmp/refscript/librefscript.a`) with the parser removed; `tools/parity/script_reference.cpp` injects the IR and drives the real pipeline |
+| M1 | ✅ | `crates/engine-sim-script` (`lexer`, `ir`, `parser`, `dump`, `resolve`), dependency-free, 27 tests |
+| M2–M5 | ⬜ | unchanged |
+
+Two deviations from the plan, both forced by the missing toolchain:
+
+* **A4 became "remove the parser" rather than "stub `parser.auto.h`".** Only
+  `Parser::{location_type, semantic_type}` and `m_parser->parse()` were reachable
+  from the rest of piranha, so `parseHelper` is stubbed and every unit is filled
+  by IR injection instead. The oracle therefore covers everything *downstream*
+  of the parser — resolution, validation, node generation, execution, the
+  `scripting/` bindings — which is the part the port has to match.
+* **The M0 gate is now the IR round trip, not "reproduce the TRX520 fixture".**
+  The TRX520 script (`assets/engines/atg-video-1/01_honda_trx520.mr`) is in the
+  old language and cannot be parsed by the current grammar, and a script-built
+  engine can only be compared with the hand-built Rust fixture once the
+  bindings exist (M4). What M0 *can* prove, and does, is that the original
+  pipeline accepts the IR the Rust parser produces (`--check`: resolve +
+  validate clean for all 58 scripts) and that it builds and runs a real engine
+  from it (`--run assets/main.mr`: 16 263 engine and trace checkpoints,
+  recorded in `rust/crates/engine-sim-script/fixtures/main_engine.trace`).
+  That recorded trace is the G2 target M4 has to hit.
+
+### 8.2 The IR dump
+
+`engine-sim-script` writes the IR as S-expressions, one `(unit "path" ...)` per
+file, with imports, then definitions, then nodes — the three lists
+`IrCompilationUnit` actually keeps, in that order. `script_reference --ir` reads
+a dump back into piranha objects and re-emits it, so `compare_ir.py` compares
+*two independently produced* trees rather than one text against itself.
+
+Token flags: only `specified` is carried. `IrTokenInfo::valid` only selects the
+error code in `Parser::error`, `empty` is never read (`grep -r "\.empty\b"`),
+and a label's own token flags are not recoverable from `IrValueLabel`, so the
+dump defines labels as always specified — which is exactly what the scanner
+produces for them.
+
+Two places where the original relies on the parser actions rather than on
+constructors, and the injection has to mirror them:
+
+* `IrAttributeDefinition`'s constructor leaves `m_defaultValue` and `m_isAlias`
+  uninitialised, so `setDefaultValue(nullptr)` and `setAlias(false)` must be
+  called even when the script wrote neither.
+* `IrNode::setThis` does not store a "this" pointer: it appends an attribute
+  named `this` to the node's attribute list. `data_access '.' node` is modelled
+  the same way in the Rust IR.
+
 ### What would come from the user (only for A2 — M0 does not need it)
 
 In a tree with `flex` and `bison` (3.2+), from the submodule root:

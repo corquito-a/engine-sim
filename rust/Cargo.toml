@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/engine-sim-core"]
+members = ["crates/engine-sim-core", "crates/engine-sim-script"]
 
 [workspace.package]
 version = "0.1.0"

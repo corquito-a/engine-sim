@@ -27,7 +27,9 @@ Motivation and estimates: [`docs/rust-port-assessment.md`](../docs/rust-port-ass
 | `atg_scs` subset (rigid bodies, constraints, NSV solver, Gauss-Seidel) | `submodules/simple-2d-constraint-solver` | ✅ done | bit-exact (whole-core) |
 | `dsp` (low pass, Butterworth f32/f64, derivative, delay, convolution, leveling, jitter, `<random>` compat) | `src/*_filter.cpp`, `delta-studio`'s `convolve.h` | ✅ done | bit-exact (filter harness) |
 | `synth` (input resampling, impulse response, render/mix, int16 out) | `src/synthesizer.cpp` | ✅ done | bit-exact (filter harness + whole-core incl. audio) |
-| script interpreter (`.mr`) | `scripting/`, `submodules/piranha` | ⬜ | — |
+| `script` front end (`.mr` scanner, parser, IR) | `piranha/flex-bison/*`, `include/ir_*.h` | ✅ done | IR round trip through the original piranha objects, 58 scripts |
+| `script` resolution / validation / node graph | `piranha/src/ir_*.cpp`, `node_graph.cpp` | ⬜ | — |
+| `scripting/` bindings (`EngineContext` → `Engine`) | `scripting/` | ⬜ | — |
 | app shell (window/render/UI/audio out) | `delta-studio` | ⬜ | — |
 
 **Verification result: the whole simulation core and the audio path are
@@ -98,7 +100,7 @@ present.
 ```bash
 cd rust
 cargo build --all-targets     # no warnings
-cargo test                    # 16 unit + 13 gas + 4 end-to-end = 33 tests
+cargo test                    # 16 unit + 13 gas + 4 end-to-end + 27 script = 60 tests
 cargo test --release
 ./tools/parity/run_core_parity.sh 200000   # 8 964 002 bit-identical checkpoints
 ```
@@ -118,8 +120,10 @@ scenario as a Rust binary, and diff raw `f64` bit patterns:
 ./tools/parity/run_core_parity.sh 200000      # whole core, 24 fields per step
 PARITY_DYNO=1 ./tools/parity/run_core_parity.sh 20000   # same, dyno hold engaged
 ./tools/parity/run_dsp_parity.sh              # every audio filter + the synthesizer
+./tools/parity/run_script_parity.sh           # .mr front end: 58 scripts + one live engine
 
 ./tools/parity/stage_reference.sh             # first run only: builds /tmp/refcore
+./tools/parity/stage_script_reference.sh      # first run only: builds /tmp/refscript
 ```
 
 `stage_reference.sh` does the reference build: it initialises the two C++
@@ -280,28 +284,66 @@ the reference's audio thread, so PCM output is reproducible.
 
 ## Next steps
 
-1. **Script interpreter** for `.mr` (`scripting/`, `piranha`). Scope, measured
-   from the sources rather than guessed:
+1. **Script interpreter** for `.mr` (`scripting/` + `piranha`). The front end is
+   done (see the next section); what remains is everything that happens *after*
+   the parser:
 
-   * `piranha` (now checked out: `git submodule update --init
-     dependencies/submodules/piranha`) is ~5 500 lines of C++ behind a
-     flex/bison front end (`flex-bison/scanner.l`, 170 lines;
-     `flex-bison/specification.y`, 525 lines). The language is *declarative*:
-     `import`, `node`/`inline` definitions, `public`/`private`, `input`/
-     `output`/`modify`/`toggle` ports, `alias`, `label`, node instantiation and
-     arithmetic expressions. No loops, no conditionals — so a recursive-descent
-     parser that mirrors the grammar's precedence declarations is enough.
-   * `scripting/` is the engine-sim binding layer (~580 lines plus ~30 node
-     headers) and is plain C++: only the parser needs bison.
-   * **Neither `flex` nor `bison` is available in this sandbox** (no `m4`
-     either, and the distro mirrors are unreachable), so the C++ *parser*
-     cannot be rebuilt for an oracle. The interpreter's oracle is therefore the
-     already-verified `fixtures/trx520.rs`: running `01_honda_trx520.mr`
-     through the port must reproduce every parameter the bit-exact core
-     fixture uses. Engines the fixture does not cover get structural checks
-     plus hand-verified arithmetic.
-   * Milestones: scanner → parser → IR structures → compilation unit → node
-     graph → `scripting/` node types → `EngineContext` → compare with the
-     fixture.
+   * **M2 — resolution and validation.** Types, default values, visibility,
+     aliasing, `inline`, `=>` shadowing. The oracle already runs these stages on
+     the Rust IR (`script_reference --check`), so this milestone can be checked
+     stage by stage rather than only at the end.
+   * **M3 — node graph and execution** (`Node`, `NodeOutput`, `Channel`,
+     `NodeProgram`, allocator, the mutation log). The original executes nodes in
+     `NodeContainer` order and never calls `NodeProgram::optimize()` — the
+     application does not — so the order is just insertion order, but every
+     `_evaluate` side effect has to match.
+   * **M4 — the `scripting/` bindings** (~2 500 lines, the largest chunk):
+     `EngineContext`, `EngineNode::buildEngine`, every `*_node.h`, and the
+     `actions.h` entry points. Gate: `script_reference --run` against the
+     recorded `crates/engine-sim-script/fixtures/main_engine.trace`, then the
+     same for every engine asset, which retires the hand-written TRX520 fixture.
+   * **M5 — the `.wav` impulse responses** in `es/sound-library/`.
 2. **App shell** (window, render, UI, audio output) last; it is where the port
    can finally diverge from the C++ without losing fidelity.
+
+## The `.mr` front end
+
+`crates/engine-sim-script` is the port of piranha's scanner, parser and IR. It
+is dependency-free like the core crate and is verified against the original
+rather than against its own expectations.
+
+Three things made that possible:
+
+* **`scanner.l` is 170 lines and `specification.y` is 525.** Both were ported
+  rule for rule (`parser.rs` mirrors the grammar's precedence ladder
+  `value > add_exp > mul_exp > unary_exp > data_access > primary_exp >
+  atomic_value`). flex's longest-match behaviour matters: `importx` is a label,
+  `1.5` is one float token, `0x1F` is one int.
+* **Only the parser needs bison.** `stage_script_reference.sh` builds piranha
+  and the whole `scripting/` layer from the repo's own sources with the parser
+  removed, so the oracle covers everything downstream of the grammar.
+* **The IR is dumped as S-expressions** (`dump.rs`) and read back into real
+  piranha objects by `script_reference --ir`. `compare_ir.py` then compares the
+  two trees, so a mismatch points at the exact field
+  (`/unit[0]/def[3]/ports[2]/default/...`) that differs.
+
+The gate (`run_script_parity.sh`) currently reports:
+
+```
+-- 58 files round-tripped and validated, 0 mismatches
+PASS: 16263 engine/trace checkpoints match the recorded fixture
+```
+
+The second line is the interesting one: the oracle resolves, validates, builds
+and *executes* `assets/main.mr` from the Rust parser's IR, and the resulting
+engine is the Subaru EJ25 — 2 banks, 4 cylinders, 2.457 L displacement, 79 mm
+stroke (`crank0_throw = 0.0395`), 130.6 mm rods, 67 cc chambers, 19.8 cm² intake
+runners — exactly what the script declares. That output is now the target for
+M4.
+
+Four MSVC-isms had to be patched in the staged copy of piranha/scripting (never
+in the submodule), none of which change arithmetic:
+`static_assert(false, ...)` inside a template, `template <> extern inline`,
+in-class explicit specialisations of member templates, and a member template
+parameter that shadows its class template's. `unsigned __int64` and
+`boost::filesystem` (→ `std::filesystem`) are in the same category.
