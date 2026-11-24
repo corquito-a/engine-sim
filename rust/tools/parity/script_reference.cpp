@@ -34,6 +34,7 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -394,6 +395,12 @@ static IrAttributeDefinition *buildPort(const sx::Node &form) {
     else if (dir == "modify") resolved = IrAttributeDefinition::Direction::Modify;
     else if (dir == "toggle") resolved = IrAttributeDefinition::Direction::Toggle;
 
+    // The dump carries the direction's *spelling* but not its position, so this
+    // token is synthesized and every error reported at it lands on line 1. The
+    // original's parser would point it at the keyword; `V0090`/`V0100` are the
+    // only codes reported through this token, and the recorded fixtures compare
+    // codes rather than lines, so nothing is lost -- but a line-sensitive test
+    // of those two codes would see the difference.
     IrTokenInfo_string directionToken(dir, 1, 1, 1, 1);
 
     auto *definition =
@@ -1060,6 +1067,83 @@ static void loadEngineAndTrace(Engine *engine, int stepCount) {
     traceFrames(simulator, engine, stepCount);
 }
 
+/// `IrNodeDefinition::validateBuiltinMappings` compares a `=>` definition's
+/// ports against the builtin's *reference node* -- a real `Node` instance,
+/// built by `Rule::generateReference` -- so the port list only exists in C++.
+/// This dumps it: one row per port, using the same `getInputPortInfo` /
+/// `getOutputPortInfo` calls the validator makes, so the table is exactly the
+/// answers those two functions give.
+///
+///     builtin,<builtin>
+///     input,<builtin>,<port>,<modifiesInput>,<enableInput>
+///     output,<builtin>,<port>,<isAlias>
+///     absent,<builtin>
+static void dumpBuiltinPorts(piranha::LanguageRules *rules, const std::string &listPath) {
+    std::vector<std::string> names;
+    {
+        std::istringstream stream(readFile(listPath));
+        std::string line;
+        while (std::getline(stream, line)) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (!line.empty()) names.push_back(line);
+        }
+    }
+
+    std::sort(names.begin(), names.end());
+    names.erase(std::unique(names.begin(), names.end()), names.end());
+
+    std::string out;
+    for (const std::string &name : names) {
+        const piranha::Node *reference =
+            rules->checkBuiltinType(name) ? rules->getReferenceNode(name) : nullptr;
+
+        if (reference == nullptr) {
+            out += "absent," + name + "\n";
+            continue;
+        }
+
+        // A registered builtin whose reference node has no ports at all still
+        // has to appear: "the reference has no such port" is what `V0080`/
+        // `V0081` report, and it is not the same answer as "not registered".
+        out += "builtin," + name + "\n";
+
+        std::set<std::string> inputs;
+        for (int i = 0; i < reference->getInputCount(); i++) {
+            inputs.insert(reference->getInput(i)->name);
+        }
+
+        std::set<std::string> outputs;
+        for (int i = 0; i < reference->getOutputCount(); i++) {
+            outputs.insert(reference->getOutput(i)->name);
+        }
+
+        for (int i = 0; i < reference->getOutputReferenceCount(); i++) {
+            outputs.insert(reference->getOutputReference(i)->name);
+        }
+
+        for (const std::string &port : inputs) {
+            piranha::Node::PortInfo info;
+            // A name that came from the port list is always found; the call is
+            // what resolves the flags a name-keyed lookup would report.
+            reference->getInputPortInfo(port, &info);
+
+            out += "input," + name + "," + port + ","
+                + (info.modifiesInput ? "1" : "0") + ","
+                + (info.isToggle ? "1" : "0") + "\n";
+        }
+
+        for (const std::string &port : outputs) {
+            piranha::Node::PortInfo info;
+            reference->getOutputPortInfo(port, &info);
+
+            out += "output," + name + "," + port + ","
+                + (info.isAlias ? "1" : "0") + "\n";
+        }
+    }
+
+    std::fwrite(out.data(), 1, out.size(), stdout);
+}
+
 int main(int argc, char **argv) {
     if (argc < 3) {
         std::fprintf(stderr,
@@ -1067,11 +1151,35 @@ int main(int argc, char **argv) {
             "       script_reference --check <root.mr> <dump.txt>\n"
             "       script_reference --run   <root.mr> <dump.txt> [steps]\n"
             "       script_reference --resolved <root.mr> <dump.txt>\n"
-            "       script_reference --errors <root.mr> <dump.txt>\n");
+            "       script_reference --errors <root.mr> <dump.txt>\n"
+            "       script_reference --builtin-ports <names.txt>\n");
         return 2;
     }
 
     const std::string mode = argv[1];
+
+    // `--builtin-ports` reads the language rules only -- no IR, no compiler.
+    if (mode == "--builtin-ports") {
+        static es_script::LanguageRules builtinPortEsRules;
+        static TestRules builtinPortTestRules;
+
+        const char *builtinPortRules = std::getenv("PARITY_RULES");
+        const bool builtinPortUseTest =
+            (builtinPortRules != nullptr && std::strcmp(builtinPortRules, "test") == 0);
+
+        piranha::LanguageRules *builtinPortLanguageRules = &builtinPortEsRules;
+        if (builtinPortUseTest) {
+            builtinPortTestRules.initialize();
+            builtinPortLanguageRules = &builtinPortTestRules;
+        }
+        else {
+            builtinPortEsRules.initialize();
+        }
+
+        dumpBuiltinPorts(builtinPortLanguageRules, argv[2]);
+        return 0;
+    }
+
     const std::string dumpPath = (mode == "--ir") ? argv[2] : argv[3];
 
     const std::string dumpText = readFile(dumpPath);

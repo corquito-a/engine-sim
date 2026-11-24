@@ -7,8 +7,11 @@
 //! compared as a multiset, because the order errors are discovered in depends on
 //! traversal details the language does not specify.
 //!
-//! Not covered yet: `validateBuiltinMappings` (V0070-V0110), which needs the
-//! language rules' reference nodes. The fixtures avoid builtins for that reason.
+//! `validateBuiltinMappings` is covered too (`V0070`-`V0110`): the builtin
+//! reference nodes' ports are recorded in `tools/parity/builtin_ports.txt`, so
+//! the port comparison runs against the same data the original does. Those
+//! codes are compared as codes only -- the dump does not carry the direction
+//! token's position, so `V0090`/`V0100` land on line 1 in the oracle.
 
 use engine_sim_script::lower::Arena;
 use engine_sim_script::resolve::load_graph;
@@ -118,5 +121,5 @@ fn negative_scripts_report_the_reference_errors() {
         checked += 1;
     }
 
-    assert_eq!(checked, 17, "every negative fixture is checked");
+    assert_eq!(checked, 20, "every negative fixture is checked");
 }

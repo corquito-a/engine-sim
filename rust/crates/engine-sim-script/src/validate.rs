@@ -19,6 +19,7 @@
 //! of `resolveLocalNodeDefinition`, so only definitions *visible from the same
 //! unit* collide, and an `external` search never enters into it.
 
+use crate::ir::Direction;
 use crate::error::ErrorCode;
 use crate::lower::{Arena, Kind, StructureId};
 
@@ -236,15 +237,23 @@ impl Arena {
         self.validate_builtin_mapping(definition);
     }
 
-    /// The first half of `IrNodeDefinition::validateBuiltinMappings`: the
-    /// builtin name has to be one the language rules registered. The second
-    /// half -- comparing the definition's ports against the builtin's reference
-    /// node (`V0080`/`V0081`/`V0090`/`V0100`/`V0110`) -- needs the reference
-    /// node's port list, which the Rust side does not have yet, so those checks
-    /// are not ported.
+    /// `IrNodeDefinition::validateBuiltinMappings`.
+    ///
+    /// The builtin name has to be one the language rules registered (`V0070`),
+    /// and then every port the definition declares has to match a port on the
+    /// builtin's *reference node*: undefined inputs and outputs (`V0080`/
+    /// `V0081`), a `modify` port where the reference does not modify its input
+    /// (`V0090`), a `toggle` port where it is not a toggle (`V0100`), and an
+    /// `alias` output where the reference's primary output is not that name
+    /// (`V0110`).
+    ///
+    /// The port list comes from `builtin_ports.txt`, recorded from the original;
+    /// see `record_builtin_ports.sh`.
     fn validate_builtin_mapping(&mut self, definition: StructureId) {
-        let (is_builtin, builtin_token) = match self.kind(definition) {
-            Kind::NodeDefinition(data) => (data.defines_builtin, data.builtin_name.clone()),
+        let (is_builtin, builtin_token, ports) = match self.kind(definition) {
+            Kind::NodeDefinition(data) => {
+                (data.defines_builtin, data.builtin_name.clone(), data.attributes)
+            }
             _ => return,
         };
 
@@ -259,6 +268,78 @@ impl Arena {
                 location,
                 ErrorCode::UndefinedBuiltinType,
             ));
+            return;
+        }
+
+        // `const Node *reference = m_rules->getReferenceNode(builtinName);`
+        // A registered name always has one.
+        let Some(reference) = self.rules.builtin_ports(&builtin_token.data) else {
+            return;
+        };
+
+        let definitions = match self.kind(ports) {
+            Kind::AttributeDefinitionList(list) => list.clone(),
+            _ => return,
+        };
+
+        for port in definitions {
+            let Kind::AttributeDefinition(data) = self.kind(port).clone() else {
+                continue;
+            };
+
+            let name = data.name.data.as_str();
+
+            if data.direction == Direction::Output {
+                let Some(reference_port) = reference.outputs.iter().find(|p| p.name == name)
+                else {
+                    self.errors.push(crate::error::CompilationError::new(
+                        data.name,
+                        ErrorCode::UndefinedBuiltinOutput,
+                    ));
+                    continue;
+                };
+
+                if reference_port.alias != data.is_alias {
+                    self.errors.push(crate::error::CompilationError::new(
+                        data.name,
+                        ErrorCode::AliasAttributeMismatch,
+                    ));
+                }
+
+                continue;
+            }
+
+            let is_input = matches!(
+                data.direction,
+                Direction::Input | Direction::Modify | Direction::Toggle
+            );
+
+            if !is_input {
+                continue;
+            }
+
+            let Some(reference_port) = reference.inputs.iter().find(|p| p.name == name) else {
+                self.errors.push(crate::error::CompilationError::new(
+                    data.name,
+                    ErrorCode::UndefinedBuiltinInput,
+                ));
+                continue;
+            };
+
+            // Both mismatches are reported at the direction token, not the name.
+            if reference_port.modifies_input != (data.direction == Direction::Modify) {
+                self.errors.push(crate::error::CompilationError::new(
+                    data.direction_token.clone(),
+                    ErrorCode::ModifyAttributeMismatch,
+                ));
+            }
+
+            if reference_port.toggle != (data.direction == Direction::Toggle) {
+                self.errors.push(crate::error::CompilationError::new(
+                    data.direction_token.clone(),
+                    ErrorCode::ToggleAttributeMismatch,
+                ));
+            }
         }
     }
 

@@ -1,0 +1,6 @@
+import "engine_sim.mr"
+public node d => __engine_sim__float_sum { }
+public node e => __engine_sim__float_add {
+    input __in2;
+    output __sum;
+}

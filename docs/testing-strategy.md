@@ -574,6 +574,11 @@ parse that stops early fails instead of writing a short table.
 independent parser and compares them row for row -- the same guard the
 builtin-node table uses, and the reason `--check` has a second caller in CI.
 
+One table in the same file cannot work that way -- the builtin reference nodes'
+ports, which live in C++ constructors rather than in a declaration the script
+could parse. Those are recorded from the running original instead; see "The
+builtin port table is recorded, not transcribed" at the end of this document.
+
 Two details of the lookup that the table has to respect:
 `resolveOperatorBuiltinType` returns `""` when *either* operand type is null
 (unlike `checkConversion`, which returns false), and the lookup **is**
@@ -713,11 +718,11 @@ Two causes, both found by shrinking a fixture to four lines:
    reports an unresolved one.
 
 What is left after this phase was the unported `checkTypes` (`T0010`/`T0011`,
-four fixtures), which the next section closes; what remains today is the
-`validateBuiltinMappings` tail (`V0080`/`V0081`, one fixture), five `R0060`s
-where a member resolves in the original and not in the port, one extra
-`R0061`, and one fixture where the `R0080` cycle is detected at a different
-link.
+four fixtures) and the `validateBuiltinMappings` tail (`V0080`/`V0081`, one
+fixture); the next two sections close both. What remains today is five
+`R0060`s where a member resolves in the original and not in the port, one
+extra `R0061`, and one fixture where the `R0080` cycle is detected at a
+different link.
 
 The lesson that keeps repeating: the failing fixture mixes several questions at
 once. Five-line probes answer them one at a time in minutes, and every cause
@@ -779,3 +784,52 @@ type to compare once `public node literal_int => __piranha__literal_int { alias
 output __out [int_channel]; }` exists, so the smallest script that reproduces
 `T0010`/`T0011` is not the obvious one. Finding that was faster by deleting
 line ranges from the fixture than by reading it.
+
+## The builtin port table is recorded, not transcribed
+
+`validateBuiltinMappings` has a second half: every port a `=>` definition
+declares has to match a port on the builtin's *reference node* -- undefined
+inputs and outputs (`V0080`/`V0081`), a `modify` port where the reference does
+not modify (`V0090`), a `toggle` where it does not toggle (`V0100`), an `alias`
+output where that name is not the reference's primary output (`V0110`). The
+report moves to `MATCH 88, DIFF 6`:
+
+| | + type check | + builtin port checks |
+|---|---|---|
+| MATCH | 87 | **88** |
+| DIFF | 7 | **6** |
+| `V0080`/`V0081` | 1 / 1 | 0 / 0 |
+
+That reference node is a real `Node` instance built by
+`Rule::generateReference`, and its ports are added by C++ constructors in the
+`.cpp` files -- `PipeNode<T>` names its inputs after the wrapped output's
+connection points, `OperationNode` numbers them, `NodeContainer` is the only
+thing that ever sets `modifiesInput`/`enableInput`. So unlike the literal,
+operator and conversion tables, this one cannot be read off the sources. It is
+*run* instead: `script_reference --builtin-ports` calls the same
+`getInputPortInfo`/`getOutputPortInfo` the validator calls, for every registered
+name, and `record_builtin_ports.sh` records the answers into
+`builtin_ports.txt`. `extract_language_rules.py` folds that file into
+`language_rules.rs`, so there is still exactly one generated table and one
+`--check`.
+
+Two things the shape of that file has to get right:
+
+1. **"No ports" is not "no such builtin."** The first recording omitted
+   builtins whose reference node had no ports at all, and the port silently
+   stopped reporting `V0080` for them -- `__engine_sim__float` is a bare
+   `ChannelNode`, so every port a `=>` definition declares on it is an error in
+   the original. The dump now emits a `builtin,<name>` row for every registered
+   name, and `every_registered_builtin_has_a_port_table` fails if one goes
+   missing.
+2. **The oracle cannot point `V0090`/`V0100` at the right line.** The IR dump
+   carries the direction keyword's spelling but not its position, so the
+   injected `IrAttributeDefinition` gets a synthesized direction token on line
+   1. The port reports the real token. Codes still match, and the recorded
+   fixtures compare codes rather than lines, so this is a documented artifact
+   rather than a difference -- with a comment at the synthesis site so it is not
+   mistaken for a bug.
+
+Three negative fixtures pin the four codes (`builtin_port_not_on_reference`,
+`builtin_alias_mismatch`, `builtin_modify_mismatch`), which took the error gate
+to 20 fixtures.
