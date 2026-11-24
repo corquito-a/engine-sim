@@ -424,3 +424,57 @@ arena (selectable through `error_dump --rules=piranha`), the 37-name
 `PIRANHA_BUILTIN_NODE_TYPES` table, and a test that rescans `test_rules.cpp`
 and fails if the table and the source disagree -- transcription checked against
 its origin rather than trusted.
+
+## The line-number mismatches, fixed
+
+The fourteen ported-phase errors left in the report (`V0010` 3, `V0011` 1,
+`R0020` 3, `R0030` 2, `R0040` 2, `E0020` 2) are all **locations**, not codes or
+counts. Diagnosis, done by experiment rather than by reading:
+
+* `attribute_definition_test.mr` reports `R0040,1 R0030,1`; the attributes are on
+  lines 13-16. Moving them 40 lines down leaves the report at `...,1`, so the
+  location is not the attribute's own token.
+* `CompilationError` copies its location verbatim from the token it is handed,
+  and that token is `attribute->getSummaryToken()`. `registerToken` folds each
+  registered token into the summary with `combine`, which keeps the **minimum**
+  `lineStart`. So the summary is `min(name line, any other registered token)`.
+* The other registered token is the attribute's *value*. In the dump a string
+  literal is `(str "kaboom")` -- no token, no line -- so the harness synthesises
+  `IrTokenInfo_string(value, 1, 1, 1, 1)`, i.e. **line 1**. The summary becomes
+  `min(15, 1) = 1`.
+
+So the reference's `...,1` is an artefact of my dump not carrying literal
+tokens, not the original's semantics: with the real parser the literal has its
+own token on line 15 and the summary would be 15.
+
+The mirror-image cases have the same root: `V0040,0` in the reference comes from
+a summary that folded a *default* token (line 0 in the dump), while the port
+reports the entry's own summary line.
+
+**Root cause, one sentence:** neither side models `IrParserStructure::combine`
+for summary tokens, and literal values carry no token through the dump.
+
+**Fixed in that order.** Constants now carry their token through the IR
+(`Value::Int/Float/Bool/Str`), a literal's summary *is* its token (as
+`IrValueConstant`'s constructor does with `useToken`), the dump emits
+`(int (tok "5" 1 4) 5)` in lines mode, the harness builds constants with that
+token and gives unspecified tokens the default `INT_MAX` span, and
+`resolve_all_definitions` walks units deepest-first because
+`IrCompilationUnit::resolveAll` resolves imports before itself.
+
+Result: `MATCH 61, DIFF 33` (from 57/37), and the ported-phase residual is down
+from fourteen errors to five, in three fixtures -- `general_syntax_test_36.mr`
+(`V0010`) and `infinite_loop_test_3.mr` / `infinite_loop_test_4.mr` (`E0020`),
+all of which report a *different* token than the reference rather than a
+different code.
+
+**Original plan, for the record:**
+1. give constant values a token in the IR (`Value::Int/Float/Bool/Str`), the same
+   way the operator token was added, and emit it in lines mode;
+2. implement `combine` for summary tokens in the port (`min` lineStart, `max`
+   lineEnd, first column wins on ties), and have the harness build the same
+   summary for nodes and attributes;
+3. re-run: the fourteen should collapse, and any that do not are real.
+
+Note what this is *not*: none of the fourteen is a wrong diagnostic. Chasing the
+codes would have found nothing; comparing lines is what exposed it.

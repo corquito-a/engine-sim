@@ -112,10 +112,13 @@ impl Direction {
 /// `piranha::IrValue` and its subclasses.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
-    Int { value: i32 },
-    Float { value: f64 },
-    Bool { value: bool },
-    Str { value: String },
+    // Constants keep their token: `IrTokenInfo` is what
+    // `IrParserStructure::registerToken` folds into a summary, and the error
+    // locations in the original are summary tokens.
+    Int { token: Token, value: i32 },
+    Float { token: Token, value: f64 },
+    Bool { token: Token, value: bool },
+    Str { token: Token, value: String },
     Label { token: Token },
     NodeRef { node: Box<Node> },
     Binary { token: Token, op: BinOp, left: Box<Value>, right: Box<Value> },

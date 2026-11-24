@@ -64,12 +64,30 @@ fn float(value: f64) -> String {
     }
 }
 
+/// `(int <value>)`, or `(int (tok "42" 1 15) 42)` when lines are carried: the
+/// token is what makes a summary span the literal, as it does in the original.
+fn write_constant(text: &mut String, lines: bool, name: &str, token: &Token, value: &str) {
+    text.push('(');
+    text.push_str(name);
+    text.push(' ');
+
+    if lines {
+        write_token(text, lines, token);
+        text.push(' ');
+    }
+
+    text.push_str(value);
+    text.push(')');
+}
+
 fn write_value(text: &mut String, lines: bool, value: &Value) {
     match value {
-        Value::Int { value } => text.push_str(&format!("(int {})", value)),
-        Value::Float { value: v } => text.push_str(&format!("(float {})", float(*v))),
-        Value::Bool { value } => text.push_str(&format!("(bool {})", if *value { 1 } else { 0 })),
-        Value::Str { value } => text.push_str(&format!("(str {})", quote(value))),
+        Value::Int { token, value } => write_constant(text, lines, "int", token, &value.to_string()),
+        Value::Float { token, value: v } => write_constant(text, lines, "float", token, &float(*v)),
+        Value::Bool { token, value } => {
+            write_constant(text, lines, "bool", token, if *value { "1" } else { "0" })
+        }
+        Value::Str { token, value } => write_constant(text, lines, "str", token, &quote(value)),
         Value::Label { token: t } => {
             text.push_str("(label ");
             write_token(text, lines, t);
