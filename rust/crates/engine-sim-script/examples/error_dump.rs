@@ -47,10 +47,12 @@ fn main() {
     arena.check_circular_definitions_all();
 
     // `resolveAll()` runs the phases in this order: definitions, circular
-    // definitions, expansion, references, validation.
+    // definitions, expansion, references, types, validation.
     arena.expand_all();
 
     arena.check_references_all();
+
+    arena.check_types_all();
 
     arena.validate_all();
 

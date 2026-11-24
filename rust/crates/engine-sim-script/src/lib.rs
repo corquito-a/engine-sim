@@ -28,6 +28,7 @@ pub mod parser;
 pub mod reference;
 pub mod resolve;
 pub mod resolved;
+pub mod types;
 pub mod validate;
 
 pub use channel_type::{ChannelType, ChannelTypeRegistry};
