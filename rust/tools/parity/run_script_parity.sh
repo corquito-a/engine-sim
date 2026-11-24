@@ -76,6 +76,22 @@ echo "== building the rust front end =="
 
 IR_DUMP="$RUST_DIR/target/release/examples/ir_dump"
 
+# The M2 target: what the original's resolve + validate decided, per port and
+# per attribute. Recorded rather than gated -- the Rust side cannot reproduce it
+# yet, and a target nothing compares against is still what M2 has to hit.
+if [ "${RECORD_RESOLVED:-0}" = "1" ]; then
+    echo "== recording the resolved-type fixtures =="
+    for entry in es/engine_sim.mr assets/main.mr; do
+        name=$(echo "$entry" | tr '/' '_' | sed 's/\.mr$//')
+        (cd "$REPO_ROOT" && "$IR_DUMP" "$entry" > "$WORK/record.ir")
+        "$WORK/script_reference" --resolved "$entry" "$WORK/record.ir" \
+            | sed "s|$REPO_ROOT/||g" \
+            > "$RUST_DIR/crates/engine-sim-script/fixtures/${name}.resolved"
+        echo "  $entry -> $(wc -l < "$RUST_DIR/crates/engine-sim-script/fixtures/${name}.resolved") rows"
+    done
+    exit 0
+fi
+
 echo "== gate IR: parse every script =="
 "$RUST_DIR/target/release/examples/corpus_check" "$REPO_ROOT/es" "$REPO_ROOT/assets"
 

@@ -13,6 +13,7 @@
 //       original parser would have (see `compare_ir.py`).
 //
 //   script_reference --run <root.mr> <dump.txt> [steps]
+//   script_reference --resolved <root.mr> <dump.txt>
 //       Rebuild the IR, run resolve/validate/build/execute exactly like
 //       `EngineSimApplication::loadScript`, then dump the resulting engine and
 //       a deterministic simulation trace.
@@ -988,7 +989,8 @@ int main(int argc, char **argv) {
         std::fprintf(stderr,
             "usage: script_reference --ir    <dump.txt>\n"
             "       script_reference --check <root.mr> <dump.txt>\n"
-            "       script_reference --run   <root.mr> <dump.txt> [steps]\n");
+            "       script_reference --run   <root.mr> <dump.txt> [steps]\n"
+            "       script_reference --resolved <root.mr> <dump.txt>\n");
         return 2;
     }
 
@@ -1014,7 +1016,7 @@ int main(int argc, char **argv) {
         return 0;
     }
 
-    if ((mode != "--run" && mode != "--check") || argc < 4) {
+    if ((mode != "--run" && mode != "--check" && mode != "--resolved") || argc < 4) {
         std::fprintf(stderr, "unknown mode '%s'\n", mode.c_str());
         return 2;
     }
@@ -1058,6 +1060,87 @@ int main(int argc, char **argv) {
                 error->getErrorLocation()->lineStart, code.info.c_str());
         }
         return 1;
+    }
+
+    if (mode == "--resolved") {
+        // What resolution produced, in analyze order: per unit, each node
+        // definition's ports (declared direction/alias, the definition the type
+        // resolved to, and the channel type that came out of it), then each
+        // unit-level node's attributes and the port each resolved to.
+        //
+        // This file is the target the Rust resolution and type checking have to
+        // reproduce; nothing else records what `resolveDefinitions` +
+        // `checkTypes` actually decided.
+        auto directionName = [](IrAttributeDefinition *definition) -> const char * {
+            switch (definition->getDirection()) {
+            case IrAttributeDefinition::Direction::Input: return "input";
+            case IrAttributeDefinition::Direction::Output: return "output";
+            case IrAttributeDefinition::Direction::Modify: return "modify";
+            case IrAttributeDefinition::Direction::Toggle: return "toggle";
+            default: return "?";
+            }
+        };
+
+        auto channelTypeName = [](const piranha::ChannelType *type) -> std::string {
+            return (type != nullptr) ? std::string(type->getType()) : std::string("-");
+        };
+
+        for (IrCompilationUnit *unit : units) {
+            const std::string path = unit->getPath().toString();
+
+            std::printf("U,%s,%d,%d\n", path.c_str(), unit->getNodeCount(),
+                unit->getNodeDefinitionCount());
+
+            const int definitionCount = unit->getNodeDefinitionCount();
+            for (int d = 0; d < definitionCount; ++d) {
+                IrNodeDefinition *definition = unit->getNodeDefinition(d);
+                IrAttributeDefinitionList *ports =
+                    definition->getAttributeDefinitionList();
+
+                if (ports == nullptr) continue;
+
+                const int portCount = ports->getDefinitionCount();
+                for (int p = 0; p < portCount; ++p) {
+                    IrAttributeDefinition *port = ports->getDefinition(p);
+                    IrNodeDefinition *typeDefinition = port->getTypeDefinition();
+
+                    std::printf("P,%s,%d,%s,%d,%s,%s,%d,%s,%s\n",
+                        path.c_str(), d, definition->getName().c_str(),
+                        p, port->getName().c_str(), directionName(port),
+                        port->isAlias() ? 1 : 0,
+                        (typeDefinition != nullptr)
+                            ? typeDefinition->getName().c_str() : "-",
+                        channelTypeName(port->getImmediateChannelType()).c_str());
+                }
+            }
+
+            const int nodeCount = unit->getNodeCount();
+            for (int i = 0; i < nodeCount; ++i) {
+                IrNode *node = unit->getNode(i);
+                const std::string symbol = node->getName();
+                IrAttributeList *attributes = node->getAttributes();
+
+                if (attributes == nullptr) {
+                    std::printf("A,%s,%d,%s,-,-,-\n", path.c_str(), i,
+                        symbol.c_str());
+                    continue;
+                }
+
+                const int attributeCount = attributes->getAttributeCount();
+                for (int j = 0; j < attributeCount; ++j) {
+                    IrAttribute *attribute = attributes->getAttribute(j);
+                    IrAttributeDefinition *resolved =
+                        attribute->getAttributeDefinition();
+
+                    std::printf("A,%s,%d,%s,%d,%s,%s,%s\n", path.c_str(), i,
+                        symbol.c_str(), j, attribute->getName().c_str(),
+                        (resolved != nullptr) ? resolved->getName().c_str() : "-",
+                        (resolved != nullptr) ? directionName(resolved) : "-");
+                }
+            }
+        }
+
+        return 0;
     }
 
     if (mode == "--check") {

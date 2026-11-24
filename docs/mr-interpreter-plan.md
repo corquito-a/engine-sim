@@ -190,7 +190,7 @@ Each milestone is independently verifiable, and M0 is what unblocks everything.
 | M1 | ✅ | `crates/engine-sim-script` (`lexer`, `ir`, `parser`, `dump`, `resolve`), dependency-free, 27 tests |
 | M2a | ✅ | `lower` (parse tree → arena), `channel_type`, `error`; every unit of both entry points lowers and raises back field-for-field; 88 tests |
 | M2b | ◐ | `resolveName` / `resolveLocalName` (scope walk, unit symbols, node attributes, definition ports/body, the definition-local-only rule), `countSymbolIncidence` — done. `IrContextTree`, `IrReferenceChain`, `getImmediateReference`, `_resolveDefinitions` — pending |
-| M2c | ⬜ | `_checkReferences`, `_checkTypes`, `_checkInstantiation`, `_validate`, per-attribute resolved-type dump |
+| M2c | ⬜ | `_checkReferences`, `_checkTypes`, `_checkInstantiation`, `_validate`; target recorded — `script_reference --resolved` writes it, `fixtures/*.resolved` hold it |
 | M3–M5 | ⬜ | unchanged |
 
 Two deviations from the plan, both forced by the missing toolchain:
@@ -251,6 +251,14 @@ lowers all 18 standard-library units and all 21 asset units and asserts
 `to_unit(lower(unit)) == unit` field for field (tokens and their source
 locations included). Measured sizes: 253 nodes / 653 attributes / 641 ports
 (`es/engine_sim.mr`), 409 / 1 026 / 677 (`assets/main.mr`).
+
+The reference dump for M2c already exists: `script_reference --resolved` prints
+the original's own resolution output — per port, the direction, alias flag, the
+node definition the declared type resolved to and the channel type it produced;
+per unit-level attribute, the port it resolved to (660 rows for
+`es/engine_sim.mr`, 701 for `assets/main.mr`, recorded into
+`crates/engine-sim-script/fixtures/*.resolved` by `RECORD_RESOLVED=1`). Nothing
+compares the Rust side against it yet, so it is a recorded target, not a gate.
 
 The measured round-trip is the gate for the substrate only. M2b/M2c still owe
 the differential gate: a per-attribute dump of the *resolved* type and value,

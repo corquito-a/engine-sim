@@ -122,6 +122,7 @@ scenario as a Rust binary, and diff raw `f64` bit patterns:
 PARITY_DYNO=1 ./tools/parity/run_core_parity.sh 20000   # same, dyno hold engaged
 ./tools/parity/run_dsp_parity.sh              # every audio filter + the synthesizer
 ./tools/parity/run_script_parity.sh           # .mr front end: 58 scripts + one live engine
+RECORD_RESOLVED=1 ./tools/parity/run_script_parity.sh   # re-record the M2 targets
 
 ./tools/parity/stage_reference.sh             # first run only: builds /tmp/refcore
 ./tools/parity/stage_script_reference.sh      # first run only: builds /tmp/refscript
@@ -325,6 +326,14 @@ parent, summary token, visibility, stage flags) and reproduces
 `tests/lower_tests.rs` asserts `to_unit(lower(unit)) == unit` for all 18
 standard-library and all 21 asset units — 253/653/641 and 409/1026/677
 nodes/attributes/ports respectively.
+
+`fixtures/{es_engine_sim,assets_main}.resolved` are the **M2 target**, recorded
+from the original: one `P,` row per node-definition port (unit, definition, port,
+direction, alias, the definition the declared type resolved to, and the channel
+type `getImmediateChannelType()` produced) and one `A,` row per unit-level
+attribute (the port it resolved to). 660 and 701 rows. Nothing compares against
+them yet — that is M2c — but they record what `resolveDefinitions` +
+`checkTypes` actually decided, which is otherwise invisible.
 
 `channel_type.rs` is `piranha::ChannelType` (name, parent chain, byte-sum hash,
 `isCompatibleWith`) plus the registry that interns types; `error.rs` is the
