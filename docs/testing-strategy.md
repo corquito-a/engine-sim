@@ -1054,14 +1054,27 @@ injection and `resolve`/`validate` stages as the other modes, then calls
 own nodes in insertion order, then its children depth first — so they describe
 the graph rather than the allocator.
 
-`tools/parity/run_graph.py` records (`--record`) and checks the fixtures in
-`tools/parity/graph/`. The fixtures are deliberately tiny, one idea each:
+Two programs produce that text. `script_reference --graph` is the original;
+`graph_dump` (`crates/engine-sim-script/examples`) is the port, which builds the
+graph with `Arena::build_graph` and prints it through `graph::dump`. The dumper
+lives in the crate rather than the example so the fixture test
+(`tests/graph_tests.rs`) uses the same one.
+
+`tools/parity/run_graph.py` checks the fixtures in `tools/parity/graph/`: the
+recordings are made from the reference (`--record`, which also checks the port
+against what it just recorded) and every run compares the **port** against them.
+The fixtures are deliberately tiny, one idea each:
 
 | fixture | what it pins |
 |---|---|
 | `literal_float.mr` | one builtin literal node, its name (`"1.5"`-style quoted text is the node's *name*), its `__out` port and its channel type |
 | `node_identity.mr` | an instance with an input bound to a literal: where the literal's node lands, how the container's input and output reference are wired |
 | `literal_in_container.mr` | a literal that belongs to the instance's own container instead of the root |
+| `two_instances.mr` | the instance cache is keyed by (definition, context): two instances of one definition get two containers, each with its own literal |
+| `builtin_channel_node.mr` | a definition that maps onto a channel class instantiates like any other builtin and registers no ports |
+| `nested_body.mr` | a body that constructs a node: a container that holds nodes of its own, and a `CO` record with both a port and a node output |
+| `two_inputs.mr` | positional and named arguments both connect; two literals in one container, in argument order |
+| `modify_port.mr` | a `modify` port sets the container input's flag (`CI,...,1`) |
 
 Three things the graphs say that the code does not:
 
@@ -1081,13 +1094,41 @@ Three things the graphs say that the code does not:
   `pNodeInput` connection point; `m_outputs` stays empty.
 
 Graph fixtures have to be clean: `build` dereferences the resolved definition, so
-a script with errors has no graph to dump. That is why these three are the
-simplest shapes that still exercise a container — a binary operator over two
-ports of a user definition still reports two unspecified-token `R0010`s in the
-reference and cannot be used as a graph fixture until that resolves.
+a script with errors has no graph to dump.
 
-**Status.** `run_graph.py` currently compares the reference against the
-recordings, which catches driver and fixture drift. `crates/engine-sim-script`
-has no `Node`/`NodeOutput`/`NodeProgram` yet; when `graph_dump` lands, it becomes
-the other side of the same comparison and the recordings become the port gate,
-with no change to the format.
+**The fixture set stops at plain ports on purpose.** An operator needs a node
+class for the operation *and* IR definitions for its ports; `value: 2 * 3` under
+test rules builds `int_multiply` + `int_to_float`, and the port generates the
+conversion without the multiply under it. The probe is 15 records:
+
+```text
+G,0,root,-1,4,1
+N,0,0,"2",__piranha__literal_int,0,0,1
+...
+N,1,4,,__piranha__int_to_float,0,1,1
+I,4,0,__in,2,__out,-      # reference: the multiply's output
+I,4,0,__in,-,-,-          # port: nothing
+```
+
+The cause is in `expansion.rs`, not in the builder: when an operand expands
+through a conversion, the `IrInternalReference` it builds must point at the
+operand *structure* (`IrBinaryOperator`), and the port's points at the resolved
+fixed type instead, so generation walks into that type's interface node — which
+`IrAttributeDefinition::expand` marked `setBuild(false)`, i.e. nothing. Fixing
+that is what makes an operator fixture possible.
+
+**`assets/main.mr` is not comparable yet, and the reason is M4.** Building it
+needs `es_script`'s own node classes (`__engine_sim__set_engine`,
+`__engine_sim__impulse_response`, the engine objects, ...), whose ports live in
+that library, not in piranha. `Graph::missing_builtins` records every class the
+factory answered `nullptr` for, `graph_dump` prints them, and
+`tests/graph_tests.rs` fails a fixture that needs one — so an unported class
+shows up as a missing node rather than as a shorter graph nobody notices. On
+`assets/main.mr` that list is the four `set_*` actions; the reference's 6524
+records are behind them.
+
+**Status.** The port builds the same graph as the reference on all eight
+fixtures, 67 records, byte for byte; `run_graph.py` and `tests/graph_tests.rs`
+enforce it, and `run_script_parity.sh` runs the former as its `GRAPH` gate. What
+is *not* ported yet is everything the graph is for: `initialize`, `evaluate` and
+`NodeProgram::execute`, so the graph is only checked for its shape.

@@ -19,6 +19,7 @@ pub mod definitions;
 pub mod dump;
 pub mod error;
 pub mod expansion;
+pub mod graph;
 pub mod ir;
 pub mod language_rules;
 pub mod lexer;

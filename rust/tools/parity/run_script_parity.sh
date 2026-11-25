@@ -44,7 +44,7 @@ cd "$REPO_ROOT"
 "$HERE/build_script_reference.sh"
 
 echo "== building the rust front end =="
-(cd "$RUST_DIR" && cargo build --release --example ir_dump --example corpus_check >/dev/null)
+(cd "$RUST_DIR" && cargo build --release --example ir_dump --example corpus_check --example graph_dump >/dev/null)
 
 IR_DUMP="$RUST_DIR/target/release/examples/ir_dump"
 

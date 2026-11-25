@@ -1,0 +1,5 @@
+// A definition that maps onto a channel class is instantiated like any other
+// builtin: the class registers no ports of its own, so the node has none.
+node float_channel => __piranha__float {}
+
+float_channel channel()
