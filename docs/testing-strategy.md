@@ -1227,6 +1227,18 @@ modelled yet: `checkEnabled` (no fixture enables an input), `console_in` (it
 reads stdin), `optimize`/`markDeadNodes`, and the stateful `es_script` classes,
 which are what M4 brings.
 
+**And the object graph is the next gate.** M4 is `es_script`'s own node classes:
+the ones that build `Piston`/`Crankshaft`/`CylinderBank` objects and hand them to
+`EngineContext`, until an `engine` node can `initialize` a real `Engine`. The
+first thing that can be compared is *the engine the script configured* rather
+than its behaviour, so `script_reference --engine` builds, initializes, executes
+and dumps the `E,...` header without stepping the simulation —
+`tools/parity/engine/main.engine` holds the 96 lines `assets/main.mr` produces
+(`E,name,Subaru EJ25`, the four counts, the fuel constants, every journal and
+cylinder parameter). `RECORD_ENGINE=1 ./run_script_parity.sh` re-records it. It
+is a target, not a gate yet: the port has no `Engine` to dump until those
+classes exist, which is what the plan's M4 row sequences.
+
 **One script shape has no reference answer.** `+2.5` — the "positive" operator
 — builds a `NoOpNode`, whose `__out` is an output *reference* to `__in` rather
 than a port of its own. When that node feeds a container's input, the alias walk
