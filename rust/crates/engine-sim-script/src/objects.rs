@@ -14,6 +14,7 @@
 //! Only the pieces M4 has reached are here; `EngineContext` grows a map per
 //! object type as the classes land.
 
+use engine_sim_core::fuel::{Fuel, FuelParameters};
 use engine_sim_core::function::Function;
 
 use std::collections::BTreeMap;
@@ -23,6 +24,7 @@ use std::collections::BTreeMap;
 #[derive(Default)]
 pub struct EngineContext {
     functions: BTreeMap<usize, Function>,
+    fuels: BTreeMap<usize, Fuel>,
 }
 
 impl EngineContext {
@@ -58,6 +60,18 @@ impl EngineContext {
         }
 
         self.functions.get(&node).expect("just inserted")
+    }
+
+    /// `EngineContext::getFuel`
+    pub fn fuel(&self, node: usize) -> Option<&Fuel> {
+        self.fuels.get(&node)
+    }
+
+    /// `FuelNode::generate`: the caller owns the `Fuel` in the original (`Fuel`
+    /// is a stack object there); here the context keeps it, so the same node
+    /// always answers with the same fuel.
+    pub fn generate_fuel(&mut self, node: usize, parameters: FuelParameters) -> &Fuel {
+        self.fuels.entry(node).or_insert_with(|| Fuel::new(parameters))
     }
 
     /// The nodes that generated an object, in order.
