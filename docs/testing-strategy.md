@@ -1139,19 +1139,20 @@ I,4,0,__in,2,__out,-      # the multiply's output
 in the library, not in piranha, so `graph.rs` carries them as `ClassSpec` consts
 (35 of them: the engine objects with their channel-typed outputs, the `set_*`
 actions, `impulse_response`, ...) with `NodeClass::Builtin` and their registered
-ports. That makes `assets/main.mr` buildable, and it is the strongest check the
-builder has: 6524 records, byte for byte, plus the 451 of
-`assets/engines/atg-video-2/01_subaru_ej25_eh.mr`. They are compared live against
-the reference in `run_graph.py` instead of being recorded — a 6500-line fixture
-is not something to read or review. `Graph::missing_builtins` still records every
+ports. That makes the engine's own scripts buildable, and they are the strongest
+check the builder has: **every `.mr` under `assets/` — 40 of them, 20 008
+records** — including `main.mr` (6524), all 27 engine definitions, the part
+library and the themes, byte for byte. They are compared live against the
+reference in `run_graph.py` instead of being recorded: a 6500-line fixture is not
+something to read or review, and `assets/` already keeps them under version
+control. `Graph::missing_builtins` still records every
 class the factory answered `nullptr` for, and `tests/graph_tests.rs` fails a
 fixture that needs one, so a class that falls out of the table shows up as a
 missing node rather than as a shorter graph nobody notices.
 
 **Status.** The port builds the same graph as the reference on all eleven
-fixtures (119 records), on `assets/main.mr` (6524) and on
-`assets/engines/atg-video-2/01_subaru_ej25_eh.mr` (451), byte for byte.
-`run_graph.py` and `tests/graph_tests.rs` enforce it, and `run_script_parity.sh`
-runs the former as its `GRAPH` gate. What is *not* ported yet is everything the
+fixtures (119 records) and on every script under `assets/` (40 scripts, 20 008
+records), byte for byte. `run_graph.py` and `tests/graph_tests.rs` enforce it,
+and `run_script_parity.sh` runs the former as its `GRAPH` gate. What is *not* ported yet is everything the
 graph is for — the channels behind those classes, and `initialize`, `evaluate`
 and `NodeProgram::execute` — so the graph is only checked for its shape.
