@@ -1,0 +1,15 @@
+// A unary operator: one input, one output, and a literal under it.
+node float_channel => __piranha__float {}
+node float_literal => __piranha__literal_float {
+    alias output __out [float_channel];
+}
+node float_negate => __piranha__float_negate {
+    input __in [float_channel];
+    alias output __out [float_channel];
+}
+
+private node Holder {
+    input value [float_channel];
+}
+
+Holder negated(value: -1.5)

@@ -111,6 +111,10 @@ pub struct GraphNode {
     pub context: Option<ContextId>,
     /// `Node::m_container` -- the container that holds this node.
     pub container: Option<NodeId>,
+    /// `Node::m_interfaceInput`: the input slot `getInterfaceInput()` reads.
+    /// Only `VectorSplitNode` sets one (`setInterfaceInput(&m_primaryInput)`),
+    /// and it is what `generateAliasOutput` falls back to.
+    pub interface_input: Option<usize>,
     /// `Node::m_outputReferences`' `registerOutputReference(&m_input, name)`
     /// form: the name of the input the output reads. Upstream stores a
     /// `pNodeInput *`, so the value is read when the output is used, not at
@@ -183,6 +187,7 @@ impl Graph {
             ir_structure: None,
             context: None,
             container: None,
+            interface_input: None,
             slot_output: None,
             dependencies: Vec::new(),
             nodes: Vec::new(),
@@ -380,6 +385,8 @@ struct ClassSpec {
     /// `registerOutputReference` instead of `registerOutput`: the output is a
     /// view of an input rather than a channel of its own (`NoOpNode`).
     output_reference: bool,
+    /// `setInterfaceInput` on the first input (`VectorSplitNode`).
+    interface_input: bool,
 }
 
 const fn spec(
@@ -392,6 +399,7 @@ const fn spec(
         outputs,
         inputs,
         output_reference: false,
+        interface_input: false,
     }
 }
 
@@ -427,6 +435,7 @@ const NO_OP: ClassSpec = ClassSpec {
     outputs: &[],
     inputs: &["__in"],
     output_reference: true,
+    interface_input: false,
 };
 
 const CONVERSION_TO_FLOAT: ClassSpec = spec(
@@ -444,6 +453,250 @@ const CONVERSION_TO_STRING: ClassSpec = spec(
 /// `ChannelNode`: no ports of its own, whatever its channel type.
 const CHANNEL: ClassSpec = spec(NodeClass::Channel, &[], &[]);
 
+/// `VectorSplitNode`: four inputs all named `__in`, the first of which is the
+/// interface input, and one output per component.
+const VECTOR_SPLIT: ClassSpec = ClassSpec {
+    class: NodeClass::Builtin,
+    outputs: &[
+        ("x", "VectorNodeType"),
+        ("y", "VectorNodeType"),
+        ("z", "VectorNodeType"),
+        ("w", "VectorNodeType"),
+    ],
+    inputs: &["__in", "__in", "__in", "__in"],
+    output_reference: false,
+    interface_input: true,
+};
+
+/// `es_script`'s `ImpulseResponseNode`, the one library class the engine
+/// scripts reach before the rest of M4. Its ports are the ones the reference
+/// registers (`filename`, `volume` -> `ImpulseResponseChannel`).
+const IMPULSE_RESPONSE: ClassSpec = spec(
+    NodeClass::Builtin,
+    &[("__out", "ImpulseResponseChannel")],
+    &["filename", "volume"],
+);
+
+/// `es_script`'s own node classes: the engine objects and the actions that
+/// register them.
+///
+/// The ports are the ones the reference registers, taken from the graph it
+/// builds for `assets/main.mr` -- the same source `tools/parity/builtin_ports.txt`
+/// uses for the type checker. What each class *does* is M4; until then a node of
+/// one of these classes is structurally right and inert, which is all
+/// `IrCompilationUnit::build` asks of it.
+
+const ADD_CRANKSHAFT: ClassSpec = spec(
+    NodeClass::Builtin,
+    &[],
+    &["crankshaft", "engine"],
+);
+
+const ADD_CYLINDER: ClassSpec = spec(
+    NodeClass::Builtin,
+    &[],
+    &["connecting_rod", "cylinder_bank", "exhaust_system", "ignition_wire", "intake", "piston", "primary_length", "rod_journal", "sound_attenuation"],
+);
+
+const ADD_CYLINDER_BANK: ClassSpec = spec(
+    NodeClass::Builtin,
+    &[],
+    &["cylinder_bank", "engine"],
+);
+
+const ADD_GEAR: ClassSpec = spec(
+    NodeClass::Builtin,
+    &[],
+    &["ratio", "transmission"],
+);
+
+const ADD_IGNITION_MODULE: ClassSpec = spec(
+    NodeClass::Builtin,
+    &[],
+    &["engine", "ignition_module"],
+);
+
+const ADD_LOBE: ClassSpec = spec(
+    NodeClass::Builtin,
+    &[],
+    &["camshaft", "centerline"],
+);
+
+const ADD_ROD_JOURNAL: ClassSpec = spec(
+    NodeClass::Builtin,
+    &[],
+    &["crankshaft", "rod_journal"],
+);
+
+const ADD_SAMPLE: ClassSpec = spec(
+    NodeClass::Builtin,
+    &[],
+    &["function", "x", "y"],
+);
+
+const CAMSHAFT: ClassSpec = spec(
+    NodeClass::Builtin,
+    &[("__out", "CamshaftChannel")],
+    &["advance", "base_radius", "lobe_profile"],
+);
+
+const CONNECT_IGNITION_WIRE: ClassSpec = spec(
+    NodeClass::Builtin,
+    &[],
+    &["angle", "ignition_module", "wire"],
+);
+
+const CONNECTING_ROD: ClassSpec = spec(
+    NodeClass::Builtin,
+    &[("__out", "ConnectingRodChannel")],
+    &["center_of_mass", "length", "mass", "moment_of_inertia", "slave_throw"],
+);
+
+const CRANKSHAFT: ClassSpec = spec(
+    NodeClass::Builtin,
+    &[("__out", "CrankshaftChannel")],
+    &["flywheel_mass", "friction_torque", "mass", "moment_of_inertia", "position_x", "position_y", "tdc", "throw"],
+);
+
+const CYLINDER_BANK: ClassSpec = spec(
+    NodeClass::Builtin,
+    &[("__out", "CylinderBankChannel")],
+    &["angle", "bore", "deck_height", "display_depth", "position_x", "position_y"],
+);
+
+const CYLINDER_HEAD: ClassSpec = spec(
+    NodeClass::Builtin,
+    &[("__out", "CylinderHeadChannel")],
+    &["chamber_volume", "exhaust_port_flow", "exhaust_runner_cross_section_area", "exhaust_runner_volume", "flip_display", "intake_port_flow", "intake_runner_cross_section_area", "intake_runner_volume", "valvetrain"],
+);
+
+const DIRECT_THROTTLE_LINKAGE: ClassSpec = spec(
+    NodeClass::Builtin,
+    &[("__out", "ThrottleChannel")],
+    &["gamma"],
+);
+
+const ENGINE: ClassSpec = spec(
+    NodeClass::Builtin,
+    &[("__out", "EngineChannel")],
+    &["dyno_hold_step", "dyno_max_speed", "dyno_min_speed", "fuel", "hf_gain", "jitter", "name", "noise", "redline", "simulation_frequency", "starter_speed", "starter_torque", "throttle"],
+);
+
+const EXHAUST_SYSTEM: ClassSpec = spec(
+    NodeClass::Builtin,
+    &[("__out", "ExhaustSystemChannel")],
+    &["audio_volume", "collector_cross_section_area", "impulse_response", "length", "outlet_flow_rate", "primary_flow_rate", "primary_tube_length", "velocity_decay"],
+);
+
+const FUEL: ClassSpec = spec(
+    NodeClass::Builtin,
+    &[("__out", "FuelChannel")],
+    &["burning_efficiency_randomness", "density", "energy_density", "low_efficiency_attenuation", "max_burning_efficiency", "max_dilution_effect", "max_turbulence_effect", "molecular_afr", "molecular_mass", "name", "turbulence_to_flame_speed_ratio"],
+);
+
+const FUNCTION: ClassSpec = spec(
+    NodeClass::Builtin,
+    &[("__out", "FunctionChannel")],
+    &["filter_radius"],
+);
+
+const GENERATE_HARMONIC_CAM_LOBE: ClassSpec = spec(
+    NodeClass::Builtin,
+    &[],
+    &["duration_at_50_thou", "function", "gamma", "lift", "steps"],
+);
+
+const IGNITION_MODULE: ClassSpec = spec(
+    NodeClass::Builtin,
+    &[("__out", "IgnitionModuleChannel")],
+    &["limiter_duration", "rev_limit", "timing_curve"],
+);
+
+const IGNITION_WIRE: ClassSpec = spec(
+    NodeClass::Builtin,
+    &[("__out", "IgnitionWireChannel")],
+    &[],
+);
+
+const INTAKE: ClassSpec = spec(
+    NodeClass::Builtin,
+    &[("__out", "IntakeChannel")],
+    &["idle_flow_rate", "idle_throttle_plate_position", "intake_flow_rate", "molecular_afr", "plenum_cross_section_area", "plenum_volume", "runner_flow_rate", "runner_length", "throttle_gamma", "velocity_decay"],
+);
+
+const K_28INH2O: ClassSpec = spec(
+    NodeClass::Builtin,
+    &[("__out", "FloatNodeType")],
+    &["flow"],
+);
+
+const K_CARB: ClassSpec = spec(
+    NodeClass::Builtin,
+    &[("__out", "FloatNodeType")],
+    &["flow"],
+);
+
+const PISTON: ClassSpec = spec(
+    NodeClass::Builtin,
+    &[("__out", "PistonChannel")],
+    &["blowby", "compression_height", "displacement", "mass", "wrist_pin_position"],
+);
+
+const ROD_JOURNAL: ClassSpec = spec(
+    NodeClass::Builtin,
+    &[("__out", "RodJournalChannel")],
+    &["angle"],
+);
+
+const SET_APPLICATION_SETTINGS: ClassSpec = spec(
+    NodeClass::Builtin,
+    &[],
+    &["boost_units", "color_background", "color_blue", "color_foreground", "color_green", "color_highlight1", "color_highlight2", "color_orange", "color_pink", "color_red", "color_shadow", "color_yellow", "power_units", "pressure_units", "speed_units", "start_fullscreen", "torque_units"],
+);
+
+const SET_CYLINDER_HEAD: ClassSpec = spec(
+    NodeClass::Builtin,
+    &[],
+    &["bank", "head"],
+);
+
+const SET_ENGINE: ClassSpec = spec(
+    NodeClass::Builtin,
+    &[],
+    &["engine"],
+);
+
+const SET_TRANSMISSION: ClassSpec = spec(
+    NodeClass::Builtin,
+    &[],
+    &["transmission"],
+);
+
+const SET_VEHICLE: ClassSpec = spec(
+    NodeClass::Builtin,
+    &[],
+    &["vehicle"],
+);
+
+const STANDARD_VALVETRAIN: ClassSpec = spec(
+    NodeClass::Builtin,
+    &[("__out", "ValvetrainChannel")],
+    &["exhaust_camshaft", "intake_camshaft"],
+);
+
+const TRANSMISSION: ClassSpec = spec(
+    NodeClass::Builtin,
+    &[("__out", "VehicleChannel")],
+    &["max_clutch_torque"],
+);
+
+const VEHICLE: ClassSpec = spec(
+    NodeClass::Builtin,
+    &[("__out", "VehicleChannel")],
+    &["cross_sectional_area", "diff_ratio", "drag_coefficient", "mass", "rolling_resistance", "tire_radius"],
+);
+
+
 fn class_spec(builtin: &str) -> Option<ClassSpec> {
     // `__<rules>__<class>`, and a rules name may itself contain `__`
     // (`__engine_sim__float_multiply`): the class is everything after the
@@ -452,7 +705,10 @@ fn class_spec(builtin: &str) -> Option<ClassSpec> {
 
     Some(match name {
         // `registerBuiltinType<ChannelNode>`
-        "int" | "float" | "bool" | "string" => CHANNEL,
+        "int" | "float" | "string" => CHANNEL,
+
+        // `registerBuiltinType<VectorSplitNode>`
+        "vector" | "bool" => VECTOR_SPLIT,
 
         // `DefaultLiteralNode<T>`
         "literal_float" => spec(
@@ -493,6 +749,45 @@ fn class_spec(builtin: &str) -> Option<ClassSpec> {
         "int_to_float" | "string_to_float" => CONVERSION_TO_FLOAT,
         "float_to_string" => CONVERSION_TO_STRING,
 
+        // `es_script`
+        "impulse_response" => IMPULSE_RESPONSE,
+        "add_crankshaft" => ADD_CRANKSHAFT,
+        "add_cylinder" => ADD_CYLINDER,
+        "add_cylinder_bank" => ADD_CYLINDER_BANK,
+        "add_gear" => ADD_GEAR,
+        "add_ignition_module" => ADD_IGNITION_MODULE,
+        "add_lobe" => ADD_LOBE,
+        "add_rod_journal" => ADD_ROD_JOURNAL,
+        "add_sample" => ADD_SAMPLE,
+        "camshaft" => CAMSHAFT,
+        "connect_ignition_wire" => CONNECT_IGNITION_WIRE,
+        "connecting_rod" => CONNECTING_ROD,
+        "crankshaft" => CRANKSHAFT,
+        "cylinder_bank" => CYLINDER_BANK,
+        "cylinder_head" => CYLINDER_HEAD,
+        "direct_throttle_linkage" => DIRECT_THROTTLE_LINKAGE,
+        "engine" => ENGINE,
+        "exhaust_system" => EXHAUST_SYSTEM,
+        "fuel" => FUEL,
+        "function" => FUNCTION,
+        "generate_harmonic_cam_lobe" => GENERATE_HARMONIC_CAM_LOBE,
+        "ignition_module" => IGNITION_MODULE,
+        "ignition_wire" => IGNITION_WIRE,
+        "intake" => INTAKE,
+        "k_28inH2O" => K_28INH2O,
+        "k_carb" => K_CARB,
+        "piston" => PISTON,
+        "rod_journal" => ROD_JOURNAL,
+        "set_application_settings" => SET_APPLICATION_SETTINGS,
+        "set_cylinder_head" => SET_CYLINDER_HEAD,
+        "set_engine" => SET_ENGINE,
+        "set_transmission" => SET_TRANSMISSION,
+        "set_vehicle" => SET_VEHICLE,
+        "standard_valvetrain" => STANDARD_VALVETRAIN,
+        "transmission" => TRANSMISSION,
+        "vehicle" => VEHICLE,
+
+
         _ => return None,
     })
 }
@@ -527,6 +822,10 @@ fn generate_builtin(graph: &mut Graph, builtin: &str) -> Option<NodeId> {
         if graph.nodes[node].primary_output.is_empty() {
             graph.nodes[node].primary_output = (*name).to_string();
         }
+    }
+
+    if spec.interface_input {
+        graph.nodes[node].interface_input = Some(0);
     }
 
     if spec.output_reference {
@@ -925,6 +1224,40 @@ impl Arena {
             return self.generate_alias_output(graph, node, state);
         }
 
+        // `IrAttributeDefinition::_generateNodeOutput`'s interface branch: the
+        // output *is* the interface, so the port comes back without a
+        // `generateInterface` step -- that one only exists on `_generateNode`.
+        let interface_output = match self.kind(structure) {
+            Kind::AttributeDefinition(data)
+                if data.type_definition.is_some()
+                    && data.direction == Direction::Output
+                    && data.default_value.is_none() =>
+            {
+                Some(data.name.data.clone())
+            }
+            _ => None,
+        };
+
+        if let Some(name) = interface_output {
+            let owner = state.contexts.context(context)?;
+            let parent = state.contexts.parent(context)?;
+            let node = self.generate_node(graph, owner, parent, container, state)?;
+
+            return graph.get_output(node, &name);
+        }
+
+        // `IrNode::_generateNodeOutput`'s interface branch.
+        if let Kind::Node(data) = self.kind(structure) {
+            if data.is_interface {
+                if !data.build {
+                    return None;
+                }
+
+                let scope = self.entry(structure).scope_parent?;
+                return self.generate_node_output(graph, scope, context, container, state);
+            }
+        }
+
         if let Kind::Binary {
             op: BinOp::Dot,
             left,
@@ -996,7 +1329,11 @@ impl Arena {
 
         match self.generate_node_output_of_node(graph, node, &primary, state) {
             Some(primary_node) => self.generate_alias_output(graph, primary_node, state),
-            None => graph.nodes[node].inputs.iter().find_map(|input| input.connection),
+            // `Node::getInterfaceInput`: a slot only `VectorSplitNode`
+            // registers, null for everything else.
+            None => graph.nodes[node]
+                .interface_input
+                .and_then(|index| graph.nodes[node].inputs[index].connection),
         }
     }
 

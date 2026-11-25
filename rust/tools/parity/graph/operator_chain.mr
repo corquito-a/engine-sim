@@ -1,0 +1,34 @@
+// An operator is a node the *rules* build: `1.5 * 2.5` expands into a
+// `float_multiply` node whose inputs are the two literal nodes, and `2 * 3`
+// wraps the same shape in an `int_to_float` because the port it feeds is a
+// float channel. The operation classes come from the language rules; the IR
+// only says what the ports are called.
+node float_channel => __piranha__float {}
+node int_channel => __piranha__int {}
+node float_literal => __piranha__literal_float {
+    alias output __out [float_channel];
+}
+node int_literal => __piranha__literal_int {
+    alias output __out [int_channel];
+}
+node float_multiply => __piranha__float_multiply {
+    input __in0 [float_channel];
+    input __in1 [float_channel];
+    alias output __out [float_channel];
+}
+node int_multiply => __piranha__int_multiply {
+    input __in0 [int_channel];
+    input __in1 [int_channel];
+    alias output __out [int_channel];
+}
+node int_to_float => __piranha__int_to_float {
+    input __in [int_channel];
+    alias output __out [float_channel];
+}
+
+private node Holder {
+    input value [float_channel];
+}
+
+Holder naive(value: 1.5 * 2.5)
+Holder widened(value: 2 * 3)
