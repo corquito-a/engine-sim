@@ -24,7 +24,9 @@ use crate::graph::{class_name, Graph, NodeClass};
 use crate::objects::EngineContext;
 use crate::values::Value;
 
+use engine_sim_core::constants::PI;
 use engine_sim_core::function::Function;
+use engine_sim_core::units::THOU;
 
 use std::collections::BTreeMap;
 
@@ -41,6 +43,9 @@ pub struct Program {
     /// them, the generated `Function` reads them, and the order they arrive in is
     /// the order the actions run in.
     samples: BTreeMap<usize, Vec<(f64, f64)>>,
+    /// `FunctionNode::setFilterRadius`, which a generator (`generate_harmonic_
+    /// cam_lobe` does) calls after the node read its `filter_radius` input.
+    filter_radius: BTreeMap<usize, f64>,
     /// The objects the data nodes generate, one per node.
     pub context: EngineContext,
 }
@@ -56,6 +61,7 @@ impl Program {
             console: String::new(),
             runtime_error: None,
             samples: BTreeMap::new(),
+            filter_radius: BTreeMap::new(),
             context: EngineContext::new(),
         }
     }
@@ -117,6 +123,18 @@ impl Program {
             self.evaluate(node)?;
         }
 
+        // `NodeContainer::_evaluate` only ever reaches the nodes of the container
+        // a node owns, so a container whose owning node nothing evaluates -- an
+        // engine part's group, reached only through an object input -- would never
+        // run. Those are the containers the graph still has nodes in and the walk
+        // above did not touch; run them in pre-order, the way `initialize` visits
+        // them, and let the evaluated flag keep the order deterministic.
+        for container in self.unreached_containers(root) {
+            for node in self.graph.node(container).nodes.clone() {
+                self.evaluate(node)?;
+            }
+        }
+
         Ok(())
     }
 
@@ -132,6 +150,14 @@ impl Program {
         // the output a port is wired to runs first.
         let inputs = self.graph.node(node).inputs.clone();
         for input in &inputs {
+            // `Node::evaluate`: the input's dependency runs before the node the
+            // port is wired to. A data node's object input is the reachable case:
+            // the dependency is the container the object was declared in, and
+            // running it is what lets that container's `add_sample`s run at all.
+            if let Some(dependency) = input.dependency {
+                self.evaluate(dependency)?;
+            }
+
             if let Some(port) = input.connection {
                 if let Some(owner) = self.graph.port(port).owner {
                     self.evaluate(owner)?;
@@ -155,6 +181,31 @@ impl Program {
     }
 
     /// `Node::_evaluate`, for the classes that have one.
+    /// The containers under `root` that still hold nodes nothing has evaluated.
+    fn unreached_containers(&self, root: usize) -> Vec<usize> {
+        let mut containers = Vec::new();
+        let mut stack = vec![root];
+
+        while let Some(container) = stack.pop() {
+            containers.push(container);
+
+            for child in self.graph.node(container).children.iter().rev() {
+                stack.push(*child);
+            }
+        }
+
+        containers
+            .into_iter()
+            .filter(|container| {
+                self.graph
+                    .node(*container)
+                    .nodes
+                    .iter()
+                    .any(|node| !self.evaluated[*node])
+            })
+            .collect()
+    }
+
     fn run(&mut self, node: usize) -> Result<(), String> {
         let data = self.graph.node(node);
 
@@ -215,6 +266,47 @@ impl Program {
                 Ok(())
             }
 
+            // `GenerateHarmonicCamLobeNode::_evaluate`: a symmetric lobe profile
+            // written straight into the node's sample list, then the node's filter
+            // radius set to the step -- after the node had read its input.
+            "generate_harmonic_cam_lobe" => {
+                let duration = self.number(node, "duration_at_50_thou").unwrap_or(0.0);
+                let gamma = self.number(node, "gamma").unwrap_or(1.0);
+                let lift = self.number(node, "lift").unwrap_or(300.0);
+                let steps = self.number(node, "steps").unwrap_or(100.0) as i32;
+
+                if let Some(target) = self.object_source(node, "function") {
+                    let angle = duration / 4.0;
+                    let s = (2.0 * 50.0 * THOU / lift).powf(1.0 / gamma) - 1.0;
+                    let k = s.acos() / angle;
+                    let extents = PI / k;
+                    let step = extents / (steps as f64 - 5.0);
+
+                    let points = self.samples.entry(target).or_default();
+                    for i in 0..steps {
+                        if i == 0 {
+                            points.push((0.0, lift));
+                        }
+                        else {
+                            let x = i as f64 * step;
+                            let value = if x >= extents {
+                                0.0
+                            }
+                            else {
+                                lift * (0.5 + 0.5 * (k * x).cos()).powf(gamma)
+                            };
+
+                            points.push((x, value));
+                            points.push((-x, value));
+                        }
+                    }
+
+                    self.filter_radius.insert(target, step);
+                }
+
+                Ok(())
+            }
+
             // `ObjectReferenceNode::_evaluate` sets its output to itself and
             // reads its inputs into its parameter fields; the object is generated
             // on demand. Nothing to do at run time.
@@ -237,7 +329,18 @@ impl Program {
             .find(|input| input.name == name)?
             .connection?;
 
-        self.graph.port(port).owner
+        let port = self.graph.port(port);
+        let owner = port.owner?;
+
+        // An object input can be wired to an interface output, which forwards the
+        // pointer the referenced node published; follow it to the node itself.
+        if self.graph.node(owner).builtin_name.is_empty() {
+            if let Some(interface) = port.interface {
+                return Some(interface);
+            }
+        }
+
+        Some(owner)
     }
 
     fn number(&self, node: usize, name: &str) -> Option<f64> {
@@ -263,9 +366,19 @@ impl Program {
         }
 
         let samples = self.samples.get(&node).cloned().unwrap_or_default();
-        let filter_radius = self.number(node, "filter_radius").unwrap_or(0.0);
+        let filter_radius = self
+            .filter_radius
+            .get(&node)
+            .copied()
+            .or_else(|| self.number(node, "filter_radius"))
+            .unwrap_or(0.0);
 
         Some(self.context.generate_function(node, &samples, filter_radius))
+    }
+
+    /// How many points `add_sample` has pushed onto a node so far.
+    pub fn sample_count(&self, node: usize) -> usize {
+        self.samples.get(&node).map(|points| points.len()).unwrap_or(0)
     }
 
     /// The nodes whose class is `function`, in graph order.

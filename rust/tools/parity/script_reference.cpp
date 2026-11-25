@@ -1083,10 +1083,12 @@ struct ObjectDumper {
         std::printf("O,%d,%s,%016llx,%016llx\n", nodeId, field, x, y);
     }
 
-    static void emitBit(int nodeId, const char *field, double value) {
-        unsigned long long bits;
-        std::memcpy(&bits, &value, sizeof(bits));
-        std::printf("O,%d,%s,%016llx\n", nodeId, field, bits);
+    /// `O,<nodeId>,sample,<index>,<x bits>,<y bits>`
+    static void emitSample(int nodeId, int index, double x, double y) {
+        unsigned long long xBits, yBits;
+        std::memcpy(&xBits, &x, sizeof(xBits));
+        std::memcpy(&yBits, &y, sizeof(yBits));
+        std::printf("O,%d,sample,%d,%016llx,%016llx\n", nodeId, index, xBits, yBits);
     }
 
     void dump(piranha::NodeContainer *container) {
@@ -1121,7 +1123,7 @@ struct ObjectDumper {
 
         for (int index = 0; index <= Probes; ++index) {
             const double x = x0 + (x1 - x0) * index / (double)Probes;
-            emitBit(nodeId, "sample", function->sampleTriangle(x));
+            emitSample(nodeId, index, x, function->sampleTriangle(x));
         }
     }
 };

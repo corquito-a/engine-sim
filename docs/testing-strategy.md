@@ -1239,6 +1239,23 @@ cylinder parameter). `RECORD_ENGINE=1 ./run_script_parity.sh` re-records it. It
 is a target, not a gate yet: the port has no `Engine` to dump until those
 classes exist, which is what the plan's M4 row sequences.
 
+**Then the objects.** M4's classes are `ObjectReferenceNode`s: a data node's
+`_evaluate` is `setOutput(this)` plus `readAllInputs`, so the *node* holds the
+script's numbers and the object is built by `generate(context)` the first time
+something asks. `script_reference --objects` therefore runs the graph and then
+generates, dumping per node the domain, the range, whether the samples came out
+ordered, and the curve sampled at 17 points across its own domain — as raw bits,
+because that is what has to match. It is the `OBJECTS` gate over all 40 scripts
+in `assets/`.
+
+Two things it caught, neither visible from the graph alone: `NodeContainer::_
+evaluate` runs the nodes of the container a node owns (a container whose owning
+node nothing evaluates still has to run, or the 65 `add_sample` actions inside
+`assets/main.mr`'s engine never fire — the walk now runs those containers after
+the top level), and two of those curves are not made of `add_sample` at all:
+`generate_harmonic_cam_lobe` *writes* its samples and overrides the node's filter
+radius, which is why the filter radius can't simply be read off the input.
+
 **One script shape has no reference answer.** `+2.5` — the "positive" operator
 — builds a `NoOpNode`, whose `__out` is an output *reference* to `__in` rather
 than a port of its own. When that node feeds a container's input, the alias walk
