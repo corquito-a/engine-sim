@@ -16,11 +16,14 @@
 //   script_reference --resolved <root.mr> <dump.txt>
 //   script_reference --errors <root.mr> <dump.txt>
 //   script_reference --graph  <root.mr> <dump.txt>
-//   script_reference --values <root.mr> <dump.txt>
 //       Build the node graph the IR generates (`IrCompilationUnit::build`) and
 //       dump its structure: containers, nodes, ports and connections. This is
 //       what the port's node generation is compared against before any of it
 //       executes.
+//   script_reference --execute <root.mr> <dump.txt>
+//       build, initialize and execute, and let the nodes that write do it: a
+//       `console_out` prints its input to stdout. A node that throws ends the
+//       run with the message on stderr and exit status 1.
 //   script_reference --values <root.mr> <dump.txt>
 //       build, initialize and execute, then read every port's value through
 //       `fullCompute` and print `V,<node>,<port>,<type>,<text>`. The type's
@@ -1443,7 +1446,7 @@ int main(int argc, char **argv) {
 
     if ((mode != "--run" && mode != "--check" && mode != "--resolved"
             && mode != "--errors" && mode != "--graph"
-            && mode != "--values") || argc < 4) {
+            && mode != "--values" && mode != "--execute") || argc < 4) {
         std::fprintf(stderr, "unknown mode '%s'\n", mode.c_str());
         return 2;
     }
@@ -1620,6 +1623,19 @@ int main(int argc, char **argv) {
         root->build(&program);
         GraphDumper dumper;
         dumpGraph(&program, &dumper);
+        return 0;
+    }
+
+    if (mode == "--execute") {
+        piranha::NodeProgram program;
+        root->build(&program);
+        program.initialize();
+        if (!program.execute()) {
+            std::fprintf(stderr, "runtime error: %s\n",
+                program.getRuntimeError().c_str());
+            return 1;
+        }
+
         return 0;
     }
 

@@ -470,6 +470,18 @@ const CONVERSION_TO_STRING: ClassSpec = spec(
 /// `ChannelNode`: no ports of its own, whatever its channel type.
 const CHANNEL: ClassSpec = spec(NodeClass::Channel, &[], &[]);
 
+/// The four classes whose `_evaluate` does something to the outside world
+/// rather than to a value: `ConsoleOutputNode` writes its input, the other
+/// three read it. None of them registers an output.
+const CONSOLE_OUT: ClassSpec = spec(NodeClass::Builtin, &[], &["data"]);
+const CONSOLE_IN: ClassSpec = spec(
+    NodeClass::Builtin,
+    &[("raw_input", "StringNodeType")],
+    &["prompt"],
+);
+const INT_PROBE: ClassSpec = spec(NodeClass::Builtin, &[], &["__in"]);
+const THROW_RUNTIME_ERROR: ClassSpec = spec(NodeClass::Builtin, &[], &["throw"]);
+
 /// `VectorSplitNode`: four inputs all named `__in`, the first of which is the
 /// interface input, and one output per component.
 const VECTOR_SPLIT: ClassSpec = ClassSpec {
@@ -758,6 +770,12 @@ fn class_spec(builtin: &str) -> Option<ClassSpec> {
 
         // `NoOpNode`
         "int_positive" | "float_positive" => NO_OP,
+
+        // The classes with side effects
+        "console_out" => CONSOLE_OUT,
+        "console_in" => CONSOLE_IN,
+        "int_probe" => INT_PROBE,
+        "throw_runtime_error" => THROW_RUNTIME_ERROR,
 
         // `*ConversionNode`
         "int_to_float" | "string_to_float" => CONVERSION_TO_FLOAT,

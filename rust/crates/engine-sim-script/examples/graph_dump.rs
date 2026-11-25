@@ -11,7 +11,8 @@
 //!
 //! `--values` prints the other half of the gate instead: the records
 //! `script_reference --values` produces by reading every port's value through
-//! `fullCompute`.
+//! `fullCompute`. `--execute` runs the graph the way `NodeProgram` does and
+//! prints whatever its side-effecting nodes wrote.
 //!
 //! The phases are `resolveAll`'s, in order, because the graph is built from what
 //! resolution decided: definitions, circularity, expansion, then `build`.
@@ -25,6 +26,7 @@ use engine_sim_script::Rules;
 fn main() {
     let mut rules = Rules::EngineSim;
     let mut values = false;
+    let mut execute = false;
     let mut arguments = std::env::args().skip(1);
 
     let entry = loop {
@@ -32,9 +34,10 @@ fn main() {
             Some(argument) if argument == "--rules=piranha" => rules = Rules::Piranha,
             Some(argument) if argument == "--rules=engine-sim" => rules = Rules::EngineSim,
             Some(argument) if argument == "--values" => values = true,
+            Some(argument) if argument == "--execute" => execute = true,
             Some(argument) => break argument,
             None => {
-                eprintln!("usage: graph_dump [--values] [--rules=piranha|engine-sim] <root.mr> [search-path...]");
+                eprintln!("usage: graph_dump [--values|--execute] [--rules=piranha|engine-sim] <root.mr> [search-path...]");
                 std::process::exit(2);
             }
         }
@@ -66,6 +69,20 @@ fn main() {
     arena.expand_all();
 
     let graph = arena.build_graph();
+
+    if execute {
+        let mut program = engine_sim_script::program::Program::new(graph);
+        let result = program.execute();
+
+        print!("{}", program.console());
+
+        if let Err(message) = result {
+            eprintln!("runtime error: {}", message);
+            std::process::exit(1);
+        }
+
+        return;
+    }
 
     let records = if values {
         engine_sim_script::values::dump(&graph)

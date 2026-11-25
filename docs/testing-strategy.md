@@ -1202,6 +1202,31 @@ class the factory answered `nullptr` for, and `tests/graph_tests.rs` fails a
 fixture that needs one, so a class that falls out of the table shows up as a
 missing node rather than as a shorter graph nobody notices.
 
+**Then a run.** `script_reference --execute` builds, initializes and executes,
+and lets the nodes that write do it. Only three classes can be observed that way,
+and only one of them is in the engine's own scripts: `console_out` prints its
+`data` input, `throw_runtime_error` fails the run when its `throw` input is true,
+and `int_probe` computes its input into a local and drops it (that is the whole
+of `IntProbeNode::_evaluate`). Everything else — every arithmetic class, every
+conversion, every literal — has an empty `_evaluate`, which is the same fact the
+value layer rests on. `program.rs` is the walk those nodes need: `initialize`
+visits the top level's nodes and each container's children in order, and
+`evaluate` is `Node::evaluate` — early out when already evaluated or evaluating,
+every connected input's node first, then `_evaluate`, then the nodes behind the
+output references.
+
+| fixture | what it pins |
+|---|---|
+| `execute/prints.mr` | five `console_out` instances in order, their arguments built from literals, `string_add` and the conversions — the text is the reference's, character for character |
+| `execute/throws.mr` | `throw_runtime_error` in the middle: what was written before it stays written, what comes after never runs, and the run fails with `Planned error` |
+
+Recordings carry both halves, `status: ok` (or the error) on the first line and
+the raw text after `----`, because "the run failed" is as much a result as the
+text. `run_graph.py --execute` and `tests/program_tests.rs` compare both. Not
+modelled yet: `checkEnabled` (no fixture enables an input), `console_in` (it
+reads stdin), `optimize`/`markDeadNodes`, and the stateful `es_script` classes,
+which are what M4 brings.
+
 **One script shape has no reference answer.** `+2.5` — the "positive" operator
 — builds a `NoOpNode`, whose `__out` is an output *reference* to `__in` rather
 than a port of its own. When that node feeds a container's input, the alias walk
@@ -1219,8 +1244,8 @@ reaches it.
 fixtures (119 records) and on every script under `assets/` (40 scripts, 20 008
 records), byte for byte, and computes the same value on every port of all of
 them. `run_graph.py` and `tests/graph_tests.rs` enforce the graph,
-`run_graph.py --values` and `tests/value_tests.rs` the values, and
-`run_script_parity.sh` runs both as its `GRAPH` and `VALUES` gates. What is *not*
-ported yet is the program around the graph — `NodeProgram::initialize` /
-`execute`, and the channels that need them — so nothing here advances a clock or
-runs a real simulation.
+`run_graph.py --values` and `tests/value_tests.rs` the values,
+`run_graph.py --execute` and `tests/program_tests.rs` the runs, and
+`run_script_parity.sh` runs them as its `GRAPH`, `VALUES` and `EXECUTE` gates.
+What is *not* ported yet is the state behind the graph: the `es_script`
+channels and nodes (M4), which is what turns a run into a simulation.
