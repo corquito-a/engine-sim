@@ -98,6 +98,7 @@ fn main() {
         let (_, node_ids) = engine_sim_script::graph::assign_ids(&graph, root);
 
         let mut program = engine_sim_script::program::Program::new(graph);
+
         if let Err(message) = program.execute() {
             eprintln!("runtime error: {}", message);
             std::process::exit(1);

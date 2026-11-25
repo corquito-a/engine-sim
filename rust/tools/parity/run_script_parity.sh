@@ -28,6 +28,9 @@
 #          compares what the nodes that write actually wrote, and whether the
 #          run failed.
 #
+#   OBJECTS `--objects` on every script in `assets/`: the curves the data nodes
+#          generate, byte for byte. This is the first gate that reaches M4.
+#
 #   ENGINE (M4 target) `tools/parity/engine/main.engine` is the engine that
 #          `assets/main.mr` configures, dumped with `--engine`. The port does not
 #          produce it yet; it is recorded so that M4 has a fixed target that is
@@ -60,6 +63,7 @@ echo "== building the rust front end =="
 (cd "$RUST_DIR" && cargo build --release --example ir_dump --example corpus_check --example graph_dump >/dev/null)
 
 IR_DUMP="$RUST_DIR/target/release/examples/ir_dump"
+GRAPH_DUMP="$RUST_DIR/target/release/examples/graph_dump"
 
 # The M2 target: what the original's resolve + validate decided, per port and
 # per attribute. Recorded rather than gated -- the Rust side cannot reproduce it
@@ -188,6 +192,34 @@ python3 "$HERE/run_graph.py" || exit 1
 # And the layer above it: the values that graph computes.
 echo "== gate VALUES: what every port computes =="
 python3 "$HERE/run_graph.py" --values || exit 1
+
+# And the objects the data nodes generate: the curves `function` nodes build out
+# of the samples `add_sample` pushes onto them, and which
+# `generate_harmonic_cam_lobe` writes itself.
+echo "== gate OBJECTS: the curves the data nodes generate =="
+objects_failures=0
+objects_scripts=0
+while IFS= read -r script; do
+    "$IR_DUMP" "$script" > "$WORK/objects.ir" 2>/dev/null || continue
+    objects_scripts=$((objects_scripts + 1))
+
+    "$WORK/script_reference" --objects "$script" "$WORK/objects.ir" > "$WORK/objects.ref" 2>"$WORK/objects.err" \
+        || { echo "FAIL: the reference could not run $script"; head -5 "$WORK/objects.err"; exit 1; }
+
+    "$GRAPH_DUMP" --objects "$script" > "$WORK/objects.port" 2>/dev/null
+
+    if ! diff -q "$WORK/objects.ref" "$WORK/objects.port" > /dev/null; then
+        echo "FAIL: $script generates different objects"
+        diff "$WORK/objects.ref" "$WORK/objects.port" | head -10
+        objects_failures=$((objects_failures + 1))
+    fi
+done < <(find assets -name '*.mr' | sort)
+
+if [ "$objects_failures" -ne 0 ]; then
+    echo "FAIL: $objects_failures of $objects_scripts scripts differ"
+    exit 1
+fi
+echo "-- $objects_scripts scripts, every generated curve identical"
 
 # And above that: what a run writes, and whether it fails where the original
 # fails.
