@@ -1,0 +1,5 @@
+private node LiteralHolder {
+    input value: 1;
+}
+
+LiteralHolder holder(missing: 2)

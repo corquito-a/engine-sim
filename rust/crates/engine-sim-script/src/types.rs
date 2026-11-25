@@ -357,16 +357,20 @@ mod tests {
             .collect()
     }
 
-    /// The fixture this pair of tests distils (`general-tests/general_syntax_test_11.mr`
-    /// in the original's suite). The `literal_int` definition is load-bearing:
-    /// it is what gives an integer literal a channel type to compare, so without
-    /// it neither check reports anything.
+    /// The fixture this triple of tests distils (`general-tests/general_syntax_test_11.mr`
+    /// in the original's suite). The `literal_*` definitions are load-bearing:
+    /// they are what give a literal a channel type to compare, so without them
+    /// the literal expands to a node with no definition at all and the check
+    /// reports `R0010` instead of what the test is about.
     const INT_LITERAL_TYPE: &str = "\
 node string_channel => __piranha__string {}
 node float_channel => __piranha__float {}
 node int_channel => __piranha__int {}
 public node literal_int => __piranha__literal_int {
     alias output __out [int_channel];
+}
+public node literal_string => __piranha__literal_string {
+    alias output __out [string_channel];
 }
 node string {
     input __in [string_channel];

@@ -57,7 +57,10 @@ fn main() {
     arena.validate_all();
 
     for error in arena.errors() {
-        let line = error.location.line;
+        // `IrTokenInfo::lineStart`, not `line`: an error on a token the IR
+        // synthesised (a literal's expansion node) is reported against
+        // `INT_MAX`, exactly as the original's default-constructed token is.
+        let line = error.location.line_start();
         println!("{}{},{}", error.code.stage, error.code.code, line);
     }
 }
