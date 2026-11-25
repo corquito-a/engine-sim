@@ -1221,6 +1221,19 @@ struct ObjectDumper {
             crankshaft.destroy();
             return;
         }
+
+        if (es_script::VehicleNode *vehicleNode = dynamic_cast<es_script::VehicleNode *>(node)) {
+            Vehicle vehicle;
+            vehicleNode->generate(&vehicle);
+
+            emitScalar(nodeId, "vehicle_mass", vehicle.getMass());
+            emitScalar(nodeId, "vehicle_drag_coefficient", vehicle.getDragCoefficient());
+            emitScalar(nodeId, "vehicle_cross_sectional_area", vehicle.getCrossSectionArea());
+            emitScalar(nodeId, "vehicle_diff_ratio", vehicle.getDiffRatio());
+            emitScalar(nodeId, "vehicle_tire_radius", vehicle.getTireRadius());
+            emitScalar(nodeId, "vehicle_rolling_resistance", vehicle.getRollingResistance());
+            return;
+        }
     }
 };
 

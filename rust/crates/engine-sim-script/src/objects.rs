@@ -28,6 +28,19 @@ pub struct EngineContext {
     pistons: BTreeMap<usize, PistonData>,
     rods: BTreeMap<usize, RodData>,
     crankshafts: BTreeMap<usize, CrankData>,
+    vehicles: BTreeMap<usize, VehicleData>,
+}
+
+/// `VehicleNode`'s `Vehicle::Parameters`: six numbers, and nothing stamped in
+/// later -- `generate` only calls `initialize`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct VehicleData {
+    pub mass: f64,
+    pub drag_coefficient: f64,
+    pub cross_sectional_area: f64,
+    pub diff_ratio: f64,
+    pub tire_radius: f64,
+    pub rolling_resistance: f64,
 }
 
 /// `ConnectingRodNode`'s `ConnectingRod::Parameters`, minus the pointers it
@@ -137,6 +150,14 @@ impl EngineContext {
 
     pub fn set_crankshaft(&mut self, node: usize, crankshaft: CrankData) {
         self.crankshafts.insert(node, crankshaft);
+    }
+
+    pub fn vehicle(&self, node: usize) -> Option<&VehicleData> {
+        self.vehicles.get(&node)
+    }
+
+    pub fn set_vehicle(&mut self, node: usize, vehicle: VehicleData) {
+        self.vehicles.insert(node, vehicle);
     }
 
     /// The nodes that generated an object, in order.
