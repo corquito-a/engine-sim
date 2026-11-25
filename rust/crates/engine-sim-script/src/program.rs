@@ -446,8 +446,8 @@ impl Program {
                     self.object_source(node, "bank"),
                     self.object_source(node, "head"),
                 ) {
-                    if !self.context.set_cylinder_head(bank, head) {
-                        let message = "Cylinder bank already has a head".to_string();
+                    if let Err(message) = self.context.set_cylinder_head(bank, head) {
+                        let message = message.to_string();
                         self.runtime_error = Some(message.clone());
                         return Err(message);
                     }

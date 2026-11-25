@@ -31,6 +31,8 @@ pub struct EngineContext {
     vehicles: BTreeMap<usize, VehicleData>,
     rod_journals: BTreeMap<usize, RodJournalData>,
     crankshaft_journals: BTreeMap<usize, Vec<usize>>,
+    /// `CylinderHeadNode::m_bank`.
+    head_banks: BTreeMap<usize, usize>,
     banks: BTreeMap<usize, BankData>,
 }
 
@@ -227,15 +229,21 @@ impl EngineContext {
         entry.cylinders.len() - 1
     }
 
-    /// `CylinderBankNode::setCylinderHead`, which refuses a second head.
-    pub fn set_cylinder_head(&mut self, bank: usize, head: usize) -> bool {
-        let entry = self.banks.entry(bank).or_default();
-        if entry.head.is_some() {
-            return false;
+    /// `CylinderBankNode::setCylinderHead` plus `CylinderHeadNode::setBank`: a
+    /// bank takes one head, and a head belongs to one bank. The caller gets the
+    /// message the original throws.
+    pub fn set_cylinder_head(&mut self, bank: usize, head: usize) -> Result<(), &'static str> {
+        if self.banks.get(&bank).and_then(|bank| bank.head).is_some() {
+            return Err("Cylinder bank already has a head");
         }
 
-        entry.head = Some(head);
-        true
+        if self.head_banks.contains_key(&head) {
+            return Err("Cylinder head already attached to a bank");
+        }
+
+        self.banks.entry(bank).or_default().head = Some(head);
+        self.head_banks.insert(head, bank);
+        Ok(())
     }
 
     /// The nodes that generated an object, in order.
