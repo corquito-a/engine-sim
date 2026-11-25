@@ -1099,6 +1099,25 @@ Three things the graphs say that the code does not:
 Graph fixtures have to be clean: `build` dereferences the resolved definition, so
 a script with errors has no graph to dump.
 
+`script_reference --values` is the oracle for the next layer: it builds,
+initializes and executes the graph, then reads every port through `fullCompute`
+and prints `V,<node>,<port>,<type>,<text>`, using the `G`/`N` numbering the
+graph dump assigns. Only the four fundamental channels have a text form; a
+vector or an engine concept prints its channel name and `-`, and an unconnected
+port prints `-,-`. Values are `%g`-formatted floats, `%d` ints, `0`/`1` bools
+and raw strings. On `/tmp`-style probes it reads back what the arithmetic did:
+
+```text
+V,0,__out,int,2       # literal
+V,1,__out,int,3       # literal
+V,2,__out,int,6       # int_multiply
+V,4,__out,float,6     # int_to_float
+```
+
+`assets/main.mr` yields 1697 lines this way (123 of them `FunctionChannel,-`,
+109 `float,1`, 70 `float,0`, ...), so the mode runs on the engine's own scripts
+too, not just on test-rules probes. Nothing on the port reads it yet.
+
 **Operators took four fixes, and each is a reference line worth knowing.**
 `value: 2 * 3` under test rules builds `int_multiply` + `int_to_float`. The port
 used to generate the conversion with nothing under it:
