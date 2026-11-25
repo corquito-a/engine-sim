@@ -48,13 +48,12 @@ IR_DUMP = RUST / "target/release/examples/ir_dump"
 GRAPH_DUMP = RUST / "target/release/examples/graph_dump"
 REFERENCE = WORK / "script_reference"
 
-# The scripts the port must build as well as the fixtures do. They need the
-# engine's own rules, so neither side runs in the test-rules mode the fixtures
-# use.
-SCRIPTS = [
-    ("assets/main.mr", "engine-sim"),
-    ("assets/engines/atg-video-2/01_subaru_ej25_eh.mr", "engine-sim"),
-]
+# The scripts the port must build as well as the fixtures do: everything under
+# `assets/`, which is the engine's own library and all of its engine
+# definitions. They need the engine's rules, so neither side runs in the
+# test-rules mode the fixtures use.
+SCRIPTS = [(path.relative_to(REPO).as_posix(), "engine-sim")
+           for path in sorted((REPO / "assets").rglob("*.mr"))]
 
 
 def run(command, **kwargs):
