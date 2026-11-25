@@ -181,6 +181,11 @@ fn main() {
                 objects.push((id, internal, "vehicle"));
             }
         }
+        for internal in program.nodes_of_class("cylinder_bank") {
+            if let Some(id) = node_ids[internal] {
+                objects.push((id, internal, "cylinder_bank"));
+            }
+        }
         objects.sort();
 
         for (node, internal, kind) in objects {
@@ -256,6 +261,59 @@ fn main() {
                 for (field, value) in scalars {
                     println!("O,{},{},{:016x}", node, field, value.to_bits());
                 }
+
+                let journals = program.context.crankshaft_journals(internal);
+                println!("O,{},crank_rod_journals,{}", node, journals.len());
+
+                for (index, journal) in journals.iter().enumerate() {
+                    let angle = program
+                        .context
+                        .rod_journal(*journal)
+                        .map(|journal| journal.angle)
+                        .unwrap_or(0.0);
+
+                    println!(
+                        "O,{},crank_rod_journal_angle,{},{:016x}",
+                        node,
+                        index,
+                        angle.to_bits()
+                    );
+                }
+
+                continue;
+            }
+
+            if kind == "cylinder_bank" {
+                let bank = match program.context.bank(internal) {
+                    Some(bank) => bank,
+                    None => continue,
+                };
+
+                let id = |node: Option<usize>| match node {
+                    Some(node) => node_ids[node]
+                        .map(|id| id.to_string())
+                        .unwrap_or_else(|| "-".to_string()),
+                    None => "-".to_string(),
+                };
+
+                println!("O,{},bank_cylinders,{}", node, bank.cylinders.len());
+
+                for (index, cylinder) in bank.cylinders.iter().enumerate() {
+                    println!(
+                        "O,{},bank_cylinder,{},{},{},{},{},{},{:016x},{:016x}",
+                        node,
+                        index,
+                        id(cylinder.piston),
+                        id(cylinder.rod),
+                        id(cylinder.rod_journal),
+                        id(cylinder.intake),
+                        id(cylinder.exhaust),
+                        cylinder.sound_attenuation.to_bits(),
+                        cylinder.primary_length.to_bits()
+                    );
+                }
+
+                println!("O,{},bank_head,{}", node, id(bank.head));
 
                 continue;
             }

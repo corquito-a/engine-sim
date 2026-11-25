@@ -1264,7 +1264,18 @@ pointers `initialize` copies can be null, and an initialized `Crankshaft` has to
 be `destroy()`ed before it goes out of scope, since `~Crankshaft` asserts its
 journal array is gone.
 
-Two things the gate caught, neither visible from the graph alone: `NodeContainer::_
+`cylinder_bank` and the two journal actions are the first *structure* the gate
+sees: a bank's cylinder list and head, and a crankshaft's journals with their
+angles. Those records are node ids, so the comparison is about **which object
+reached which list, and in what order** — and that is what exposed the last
+ordering rule. A container whose owning node nothing evaluates has to run, and it
+has to run **last-first**: a dependency in this graph points forward (a bank's
+`add_cylinder` input depends on a container built after it), so descending id is
+a topological order of the dependency forest. Ascending order gave every bank its
+cylinders reversed and every crankshaft its journal angles pairwise swapped —
+values that are individually right and collectively wrong.
+
+Two things the gate caught earlier, neither visible from the graph alone: `NodeContainer::_
 evaluate` runs the nodes of the container a node owns (a container whose owning
 node nothing evaluates still has to run, or the 65 `add_sample` actions inside
 `assets/main.mr`'s engine never fire — the walk now runs those containers after

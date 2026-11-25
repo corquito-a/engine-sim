@@ -29,6 +29,39 @@ pub struct EngineContext {
     rods: BTreeMap<usize, RodData>,
     crankshafts: BTreeMap<usize, CrankData>,
     vehicles: BTreeMap<usize, VehicleData>,
+    rod_journals: BTreeMap<usize, RodJournalData>,
+    crankshaft_journals: BTreeMap<usize, Vec<usize>>,
+    banks: BTreeMap<usize, BankData>,
+}
+
+/// `RodJournalNode`'s `m_angle`, plus the crankshaft and rod the actions stamp
+/// onto it.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RodJournalData {
+    pub angle: f64,
+    pub crankshaft: Option<usize>,
+    pub rod: Option<usize>,
+}
+
+/// One `CylinderBankNode::Cylinder`: the nodes `add_cylinder` handed the bank,
+/// in the order it took them.
+#[derive(Clone, Copy, Debug)]
+pub struct CylinderRefs {
+    pub piston: Option<usize>,
+    pub rod: Option<usize>,
+    pub rod_journal: Option<usize>,
+    pub intake: Option<usize>,
+    pub exhaust: Option<usize>,
+    pub sound_attenuation: f64,
+    pub primary_length: f64,
+}
+
+/// `CylinderBankNode`'s own state: its cylinders, and the head `set_cylinder_head`
+/// gave it. The six `CylinderBank::Parameters` numbers stay on the node.
+#[derive(Clone, Debug, Default)]
+pub struct BankData {
+    pub cylinders: Vec<CylinderRefs>,
+    pub head: Option<usize>,
 }
 
 /// `VehicleNode`'s `Vehicle::Parameters`: six numbers, and nothing stamped in
@@ -158,6 +191,51 @@ impl EngineContext {
 
     pub fn set_vehicle(&mut self, node: usize, vehicle: VehicleData) {
         self.vehicles.insert(node, vehicle);
+    }
+
+    pub fn rod_journal(&self, node: usize) -> Option<&RodJournalData> {
+        self.rod_journals.get(&node)
+    }
+
+    pub fn set_rod_journal(&mut self, node: usize, journal: RodJournalData) {
+        self.rod_journals.insert(node, journal);
+    }
+
+    /// `RodJournalNode::setAngle`/`CrankshaftNode::addRodJournal`'s stamping:
+    /// a journal learns its crankshaft, and the crankshaft keeps the list.
+    pub fn attach_rod_journal(&mut self, crankshaft: usize, journal: usize) {
+        let entry = self.rod_journals.entry(journal).or_default();
+        entry.crankshaft = Some(crankshaft);
+        self.crankshaft_journals.entry(crankshaft).or_default().push(journal);
+    }
+
+    pub fn crankshaft_journals(&self, crankshaft: usize) -> &[usize] {
+        self.crankshaft_journals
+            .get(&crankshaft)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    pub fn bank(&self, node: usize) -> Option<&BankData> {
+        self.banks.get(&node)
+    }
+
+    /// `CylinderBankNode::addCylinder`
+    pub fn add_cylinder(&mut self, bank: usize, cylinder: CylinderRefs) -> usize {
+        let entry = self.banks.entry(bank).or_default();
+        entry.cylinders.push(cylinder);
+        entry.cylinders.len() - 1
+    }
+
+    /// `CylinderBankNode::setCylinderHead`, which refuses a second head.
+    pub fn set_cylinder_head(&mut self, bank: usize, head: usize) -> bool {
+        let entry = self.banks.entry(bank).or_default();
+        if entry.head.is_some() {
+            return false;
+        }
+
+        entry.head = Some(head);
+        true
     }
 
     /// The nodes that generated an object, in order.

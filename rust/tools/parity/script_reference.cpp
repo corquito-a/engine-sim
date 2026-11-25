@@ -1214,11 +1214,47 @@ struct ObjectDumper {
             emitScalar(nodeId, "crank_position_y", crankshaft.getPosY());
             emitScalar(nodeId, "crank_tdc", crankshaft.getTdc());
 
+            std::printf("O,%d,crank_rod_journals,%d\n", nodeId,
+                crankshaft.getRodJournalCount());
+            for (int i = 0; i < crankshaft.getRodJournalCount(); ++i) {
+                char name[64];
+                std::snprintf(name, sizeof(name), "crank_rod_journal_angle");
+                std::printf("O,%d,%s,%d,%016llx\n", nodeId, name, i,
+                    bitsOf(crankshaft.getRodJournalAngle(i)));
+            }
+
             // `~Crankshaft` asserts the journal array is gone, so an initialized
             // one has to be destroyed before it goes out of scope. (The context
             // keeps the pointer `generate` handed it; nothing in the dump asks for
             // it again.)
             crankshaft.destroy();
+            return;
+        }
+
+        if (es_script::CylinderBankNode *bankNode =
+                dynamic_cast<es_script::CylinderBankNode *>(node)) {
+            // The bank's own numbers stay protected, but its cylinder list and its
+            // head are public -- and the list is what `buildEngine` counts.
+            const int cylinders = bankNode->getCylinderCount();
+            std::printf("O,%d,bank_cylinders,%d\n", nodeId, cylinders);
+
+            for (int i = 0; i < cylinders; ++i) {
+                const es_script::CylinderBankNode::Cylinder &cylinder =
+                    bankNode->getCylinder(i);
+
+                std::printf("O,%d,bank_cylinder,%d,%s,%s,%s,%s,%s,%016llx,%016llx\n",
+                    nodeId, i,
+                    GraphDumper::idOf(nodeIds, cylinder.piston).c_str(),
+                    GraphDumper::idOf(nodeIds, cylinder.rod).c_str(),
+                    GraphDumper::idOf(nodeIds, cylinder.rodJournal).c_str(),
+                    GraphDumper::idOf(nodeIds, cylinder.intake).c_str(),
+                    GraphDumper::idOf(nodeIds, cylinder.exhaust).c_str(),
+                    bitsOf(cylinder.soundAttenuation),
+                    bitsOf(cylinder.primaryLength));
+            }
+
+            std::printf("O,%d,bank_head,%s\n", nodeId,
+                GraphDumper::idOf(nodeIds, bankNode->getCylinderHead()).c_str());
             return;
         }
 
