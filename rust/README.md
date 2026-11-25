@@ -125,7 +125,7 @@ scenario as a Rust binary, and diff raw `f64` bit patterns:
 ./tools/parity/run_core_parity.sh 200000      # whole core, 24 fields per step
 PARITY_DYNO=1 ./tools/parity/run_core_parity.sh 20000   # same, dyno hold engaged
 ./tools/parity/run_dsp_parity.sh              # every audio filter + the synthesizer
-./tools/parity/run_script_parity.sh           # .mr front end: IR, RUN, GRAPH, VALUES, EXECUTE
+./tools/parity/run_script_parity.sh           # .mr front end: IR, RUN, GRAPH, VALUES, OBJECTS, EXECUTE
 RECORD_RESOLVED=1 ./tools/parity/run_script_parity.sh   # re-record the M2 targets
 RESOLVED_GAP=1 ./tools/parity/run_script_parity.sh      # how much of M2 is still open
 RECORD_ERRORS=1 ./tools/parity/run_script_parity.sh     # re-record the error fixtures
