@@ -161,6 +161,21 @@ fn main() {
                 objects.push((id, internal, "fuel"));
             }
         }
+        for internal in program.nodes_of_class("piston") {
+            if let Some(id) = node_ids[internal] {
+                objects.push((id, internal, "piston"));
+            }
+        }
+        for internal in program.nodes_of_class("connecting_rod") {
+            if let Some(id) = node_ids[internal] {
+                objects.push((id, internal, "connecting_rod"));
+            }
+        }
+        for internal in program.nodes_of_class("crankshaft") {
+            if let Some(id) = node_ids[internal] {
+                objects.push((id, internal, "crankshaft"));
+            }
+        }
         objects.sort();
 
         for (node, internal, kind) in objects {
@@ -171,6 +186,72 @@ fn main() {
                 };
 
                 print_curve("O", node, function, "");
+                continue;
+            }
+
+            if kind == "piston" {
+                let piston = match program.context.piston(internal) {
+                    Some(piston) => *piston,
+                    None => continue,
+                };
+
+                let scalars = [
+                    ("piston_mass", piston.mass),
+                    ("piston_blowby", piston.blowby_flow_coefficient),
+                    ("piston_compression_height", piston.compression_height),
+                    ("piston_wrist_pin_position", piston.wrist_pin_position),
+                    ("piston_displacement", piston.displacement),
+                ];
+
+                for (field, value) in scalars {
+                    println!("O,{},{},{:016x}", node, field, value.to_bits());
+                }
+
+                continue;
+            }
+
+            if kind == "connecting_rod" {
+                let rod = match program.context.rod(internal) {
+                    Some(rod) => *rod,
+                    None => continue,
+                };
+
+                let scalars = [
+                    ("rod_mass", rod.mass),
+                    ("rod_moment_of_inertia", rod.moment_of_inertia),
+                    ("rod_center_of_mass", rod.center_of_mass),
+                    ("rod_length", rod.length),
+                    ("rod_slave_throw", rod.slave_throw),
+                ];
+
+                for (field, value) in scalars {
+                    println!("O,{},{},{:016x}", node, field, value.to_bits());
+                }
+
+                continue;
+            }
+
+            if kind == "crankshaft" {
+                let crankshaft = match program.context.crankshaft(internal) {
+                    Some(crankshaft) => *crankshaft,
+                    None => continue,
+                };
+
+                let scalars = [
+                    ("crank_throw", crankshaft.throw),
+                    ("crank_flywheel_mass", crankshaft.flywheel_mass),
+                    ("crank_mass", crankshaft.mass),
+                    ("crank_friction_torque", crankshaft.friction_torque),
+                    ("crank_moment_of_inertia", crankshaft.moment_of_inertia),
+                    ("crank_position_x", crankshaft.position_x),
+                    ("crank_position_y", crankshaft.position_y),
+                    ("crank_tdc", crankshaft.tdc),
+                ];
+
+                for (field, value) in scalars {
+                    println!("O,{},{},{:016x}", node, field, value.to_bits());
+                }
+
                 continue;
             }
 

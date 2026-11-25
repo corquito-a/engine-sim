@@ -25,6 +25,46 @@ use std::collections::BTreeMap;
 pub struct EngineContext {
     functions: BTreeMap<usize, Function>,
     fuels: BTreeMap<usize, Fuel>,
+    pistons: BTreeMap<usize, PistonData>,
+    rods: BTreeMap<usize, RodData>,
+    crankshafts: BTreeMap<usize, CrankData>,
+}
+
+/// `ConnectingRodNode`'s `ConnectingRod::Parameters`, minus the pointers it
+/// stamps in when it generates.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RodData {
+    pub mass: f64,
+    pub moment_of_inertia: f64,
+    pub center_of_mass: f64,
+    pub length: f64,
+    pub slave_throw: f64,
+}
+
+/// `CrankshaftNode`'s `Crankshaft::Parameters`, minus the journal angles the
+/// rod journal nodes contribute.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CrankData {
+    pub throw: f64,
+    pub flywheel_mass: f64,
+    pub mass: f64,
+    pub friction_torque: f64,
+    pub moment_of_inertia: f64,
+    pub position_x: f64,
+    pub position_y: f64,
+    pub tdc: f64,
+}
+
+/// `PistonNode`'s `Piston::Parameters`, minus the pointers it stamps in when it
+/// generates: a piston node *holds* these five numbers, and the `Piston` itself
+/// is made by the action that adds a cylinder to a bank.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PistonData {
+    pub mass: f64,
+    pub blowby_flow_coefficient: f64,
+    pub compression_height: f64,
+    pub wrist_pin_position: f64,
+    pub displacement: f64,
 }
 
 impl EngineContext {
@@ -72,6 +112,31 @@ impl EngineContext {
     /// always answers with the same fuel.
     pub fn generate_fuel(&mut self, node: usize, parameters: FuelParameters) -> &Fuel {
         self.fuels.entry(node).or_insert_with(|| Fuel::new(parameters))
+    }
+
+    /// `PistonNode::_evaluate`'s `m_parameters`, once the inputs are read.
+    pub fn piston(&self, node: usize) -> Option<&PistonData> {
+        self.pistons.get(&node)
+    }
+
+    pub fn set_piston(&mut self, node: usize, piston: PistonData) {
+        self.pistons.insert(node, piston);
+    }
+
+    pub fn rod(&self, node: usize) -> Option<&RodData> {
+        self.rods.get(&node)
+    }
+
+    pub fn set_rod(&mut self, node: usize, rod: RodData) {
+        self.rods.insert(node, rod);
+    }
+
+    pub fn crankshaft(&self, node: usize) -> Option<&CrankData> {
+        self.crankshafts.get(&node)
+    }
+
+    pub fn set_crankshaft(&mut self, node: usize, crankshaft: CrankData) {
+        self.crankshafts.insert(node, crankshaft);
     }
 
     /// The nodes that generated an object, in order.

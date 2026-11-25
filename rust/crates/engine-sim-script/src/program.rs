@@ -21,7 +21,7 @@
 //! `optimize`/`markDeadNodes`, and `free`.
 
 use crate::graph::{class_name, Graph, NodeClass};
-use crate::objects::EngineContext;
+use crate::objects::{CrankData, EngineContext, PistonData, RodData};
 use crate::values::Value;
 
 use engine_sim_core::constants::PI;
@@ -305,6 +305,63 @@ impl Program {
 
                     self.filter_radius.insert(target, step);
                 }
+
+                Ok(())
+            }
+
+            // `PistonNode::_evaluate`: the five numbers it holds. The `Piston`
+            // itself is the action's (`add_cylinder`), which stamps in the bank,
+            // the rod and the cylinder index.
+            "piston" => {
+                self.context.set_piston(
+                    node,
+                    PistonData {
+                        mass: self.number(node, "mass").unwrap_or(0.0),
+                        blowby_flow_coefficient: self.number(node, "blowby").unwrap_or(0.0),
+                        compression_height: self.number(node, "compression_height").unwrap_or(0.0),
+                        wrist_pin_position: self
+                            .number(node, "wrist_pin_position")
+                            .unwrap_or(0.0),
+                        displacement: self.number(node, "displacement").unwrap_or(0.0),
+                    },
+                );
+
+                Ok(())
+            }
+
+            // `ConnectingRodNode::_evaluate`: five numbers, and the rod journal
+            // count is stamped in by the crankshaft that gathers them.
+            "connecting_rod" => {
+                self.context.set_rod(
+                    node,
+                    RodData {
+                        mass: self.number(node, "mass").unwrap_or(0.0),
+                        moment_of_inertia: self.number(node, "moment_of_inertia").unwrap_or(0.0),
+                        center_of_mass: self.number(node, "center_of_mass").unwrap_or(0.0),
+                        length: self.number(node, "length").unwrap_or(0.0),
+                        slave_throw: self.number(node, "slave_throw").unwrap_or(0.0),
+                    },
+                );
+
+                Ok(())
+            }
+
+            // `CrankshaftNode::_evaluate`: eight numbers; the journal count is
+            // whatever the `add_rod_journal` actions put on it.
+            "crankshaft" => {
+                self.context.set_crankshaft(
+                    node,
+                    CrankData {
+                        throw: self.number(node, "throw").unwrap_or(0.0),
+                        flywheel_mass: self.number(node, "flywheel_mass").unwrap_or(0.0),
+                        mass: self.number(node, "mass").unwrap_or(0.0),
+                        friction_torque: self.number(node, "friction_torque").unwrap_or(0.0),
+                        moment_of_inertia: self.number(node, "moment_of_inertia").unwrap_or(0.0),
+                        position_x: self.number(node, "position_x").unwrap_or(0.0),
+                        position_y: self.number(node, "position_y").unwrap_or(0.0),
+                        tdc: self.number(node, "tdc").unwrap_or(0.0),
+                    },
+                );
 
                 Ok(())
             }
