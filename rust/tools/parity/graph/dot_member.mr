@@ -1,0 +1,19 @@
+// `.` is the member operator, and it does not go through the expansion chain:
+// the left side generates a node and the member is that node's output port, so
+// `h.result` connects the *container's* output reference rather than a node.
+node float_channel => __piranha__float {}
+node float_literal => __piranha__literal_float {
+    alias output __out [float_channel];
+}
+
+private node Half {
+    input value [float_channel];
+    output result [float_channel]: 1.5;
+}
+
+private node Holder {
+    input value [float_channel];
+}
+
+Half h(value: 2.5)
+Holder g(value: h.result)

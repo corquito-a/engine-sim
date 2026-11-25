@@ -84,5 +84,5 @@ fn every_graph_fixture_matches_the_reference() {
         checked += 1;
     }
 
-    assert_eq!(checked, 8, "every graph fixture is checked");
+    assert_eq!(checked, 11, "every graph fixture is checked");
 }

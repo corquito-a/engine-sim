@@ -1075,6 +1075,9 @@ The fixtures are deliberately tiny, one idea each:
 | `nested_body.mr` | a body that constructs a node: a container that holds nodes of its own, and a `CO` record with both a port and a node output |
 | `two_inputs.mr` | positional and named arguments both connect; two literals in one container, in argument order |
 | `modify_port.mr` | a `modify` port sets the container input's flag (`CI,...,1`) |
+| `operator_chain.mr` | `2 * 3 + 1`: one container per operator, the conversions each one inserts, and the `CO` records that link them |
+| `unary_negate.mr` | `-x` expands to `0 - x` with a literal zero of the operand's type |
+| `dot_member.mr` | `units().mass`-style dot access resolves through the structure's own node |
 
 Three things the graphs say that the code does not:
 
@@ -1096,39 +1099,59 @@ Three things the graphs say that the code does not:
 Graph fixtures have to be clean: `build` dereferences the resolved definition, so
 a script with errors has no graph to dump.
 
-**The fixture set stops at plain ports on purpose.** An operator needs a node
-class for the operation *and* IR definitions for its ports; `value: 2 * 3` under
-test rules builds `int_multiply` + `int_to_float`, and the port generates the
-conversion without the multiply under it. The probe is 15 records:
+**Operators took four fixes, and each is a reference line worth knowing.**
+`value: 2 * 3` under test rules builds `int_multiply` + `int_to_float`. The port
+used to generate the conversion with nothing under it:
 
 ```text
-G,0,root,-1,4,1
-N,0,0,"2",__piranha__literal_int,0,0,1
-...
 N,1,4,,__piranha__int_to_float,0,1,1
-I,4,0,__in,2,__out,-      # reference: the multiply's output
-I,4,0,__in,-,-,-          # port: nothing
+I,4,0,__in,2,__out,-      # the multiply's output
 ```
 
-The cause is in `expansion.rs`, not in the builder: when an operand expands
-through a conversion, the `IrInternalReference` it builds must point at the
-operand *structure* (`IrBinaryOperator`), and the port's points at the resolved
-fixed type instead, so generation walks into that type's interface node — which
-`IrAttributeDefinition::expand` marked `setBuild(false)`, i.e. nothing. Fixing
-that is what makes an operator fixture possible.
+* `IrAttributeDefinition::_expand` calls `setBuild(false)` in exactly one branch,
+  the dead end where an output has a type definition and no default. The branch
+  that has a type definition *and* a default leaves `build` alone, so
+  `new_interface_node` must pass `build = true` there. Passing `false` detaches
+  the operand's node from the port above it — the one-line cause of the missing
+  multiply.
+* `_generateNodeOutput` has **interface branches of its own**, mirroring the
+  `generateInterface` step `_generateNode` takes: an attribute definition with an
+  output, a type definition and no default calls `generate_node` and then
+  `getOutput`; a node that *is* an interface delegates to
+  `getScopeParent()->generateNodeOutput`. Both run *before* the `Dot` and
+  `generateReferencedNodeOutput` fallbacks; without them the walk stops early and
+  leaves the port unresolved.
+* `Node::generateAliasOutput`'s last resort is `getInterfaceInput()`, and that is
+  a slot only `VectorSplitNode` fills (`setInterfaceInput(&m_primaryInput)`).
+  Falling back to "whatever the node's first input is connected to" instead makes
+  every unresolved attribute look resolved, which is what the 21 `params`
+  records in `assets/main.mr` were: the port answered `I,86,0,params,360,__out`
+  for a container the reference leaves at `-,-`. `graph::VECTOR_SPLIT` now models
+  the class that actually sets the slot.
+* A literal node's name is `valueToString`, i.e. `std::ostream`'s default float
+  formatting: `%g`, precision 6. Rust's `Display` is shortest-round-trip, so
+  `0.45359237` printed as `0.45359237` where the reference prints `0.453592`.
+  `expansion::cxx_float_text` reproduces `%g` (fixed while the exponent is in
+  `[-4, 6)`, otherwise `%e` with two-digit exponents; trailing zeros trimmed) and
+  `float_text_tests` pins it.
 
-**`assets/main.mr` is not comparable yet, and the reason is M4.** Building it
-needs `es_script`'s own node classes (`__engine_sim__set_engine`,
-`__engine_sim__impulse_response`, the engine objects, ...), whose ports live in
-that library, not in piranha. `Graph::missing_builtins` records every class the
-factory answered `nullptr` for, `graph_dump` prints them, and
-`tests/graph_tests.rs` fails a fixture that needs one — so an unported class
-shows up as a missing node rather than as a shorter graph nobody notices. On
-`assets/main.mr` that list is the four `set_*` actions; the reference's 6524
-records are behind them.
+**The real scripts are the gate that matters.** `es_script`'s node classes live
+in the library, not in piranha, so `graph.rs` carries them as `ClassSpec` consts
+(35 of them: the engine objects with their channel-typed outputs, the `set_*`
+actions, `impulse_response`, ...) with `NodeClass::Builtin` and their registered
+ports. That makes `assets/main.mr` buildable, and it is the strongest check the
+builder has: 6524 records, byte for byte, plus the 451 of
+`assets/engines/atg-video-2/01_subaru_ej25_eh.mr`. They are compared live against
+the reference in `run_graph.py` instead of being recorded — a 6500-line fixture
+is not something to read or review. `Graph::missing_builtins` still records every
+class the factory answered `nullptr` for, and `tests/graph_tests.rs` fails a
+fixture that needs one, so a class that falls out of the table shows up as a
+missing node rather than as a shorter graph nobody notices.
 
-**Status.** The port builds the same graph as the reference on all eight
-fixtures, 67 records, byte for byte; `run_graph.py` and `tests/graph_tests.rs`
-enforce it, and `run_script_parity.sh` runs the former as its `GRAPH` gate. What
-is *not* ported yet is everything the graph is for: `initialize`, `evaluate` and
-`NodeProgram::execute`, so the graph is only checked for its shape.
+**Status.** The port builds the same graph as the reference on all eleven
+fixtures (119 records), on `assets/main.mr` (6524) and on
+`assets/engines/atg-video-2/01_subaru_ej25_eh.mr` (451), byte for byte.
+`run_graph.py` and `tests/graph_tests.rs` enforce it, and `run_script_parity.sh`
+runs the former as its `GRAPH` gate. What is *not* ported yet is everything the
+graph is for — the channels behind those classes, and `initialize`, `evaluate`
+and `NodeProgram::execute` — so the graph is only checked for its shape.

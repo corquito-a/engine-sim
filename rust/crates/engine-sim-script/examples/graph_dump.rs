@@ -25,9 +25,10 @@ fn main() {
     let entry = loop {
         match arguments.next() {
             Some(argument) if argument == "--rules=piranha" => rules = Rules::Piranha,
+            Some(argument) if argument == "--rules=engine-sim" => rules = Rules::EngineSim,
             Some(argument) => break argument,
             None => {
-                eprintln!("usage: graph_dump [--rules=piranha] <root.mr> [search-path...]");
+                eprintln!("usage: graph_dump [--rules=piranha|engine-sim] <root.mr> [search-path...]");
                 std::process::exit(2);
             }
         }

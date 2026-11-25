@@ -193,8 +193,11 @@ impl Arena {
             return;
         };
 
+        // `IrAttributeDefinition::_expand`: this branch calls `setInterface(true)`
+        // and leaves `m_build` alone, so the interface node it records can be
+        // built. Only the dead-end branch below clears the flag.
         if data.direction == Direction::Output && data.default_value.is_none() {
-            let expansion = self.new_interface_node(structure, Some(type_definition), true, false);
+            let expansion = self.new_interface_node(structure, Some(type_definition), true, true);
             self.expand_with_context(expansion, context, state);
             state.set_expansion(structure, Some(context), Some(expansion));
             return;
@@ -714,8 +717,88 @@ fn literal_kind(literal: &Literal) -> LiteralKind {
 fn literal_text(literal: &Literal) -> String {
     match literal {
         Literal::Int(value) => value.to_string(),
-        Literal::Float(value) => format!("{value}"),
+        Literal::Float(value) => cxx_float_text(*value),
         Literal::Bool(value) => if *value { "1".to_string() } else { "0".to_string() },
         Literal::Str(value) => value.clone(),
+    }
+}
+
+/// `std::ostream`'s default float formatting, which is what
+/// `IrValueConstant::valueToString` gives a literal node its name with:
+/// `%g` at precision 6 -- six significant digits, fixed notation while the
+/// exponent stays in `[-4, 6)`, exponent trimmed of trailing zeros, and a
+/// two-digit signed exponent otherwise.
+///
+/// Rust's `Display` for `f64` is the shortest round-trip instead, so
+/// `0.45359237_f64 * 1.0` names a node `"0.45359237"` where the original names
+/// it `"0.453592"`; the graph gate sees that as a different node.
+fn cxx_float_text(value: f64) -> String {
+    const PRECISION: i32 = 6;
+
+    if value == 0.0 {
+        return if value.is_sign_negative() { "-0".to_string() } else { "0".to_string() };
+    }
+
+    let scientific = format!("{value:e}");
+    let (mantissa, exponent) = scientific.split_once('e').unwrap_or((&scientific, "0"));
+    let exponent: i32 = exponent.parse().unwrap_or(0);
+    let negative = mantissa.starts_with('-');
+
+    let body = if exponent < -4 || exponent >= PRECISION {
+        // `%e` with one fewer fraction digit than the precision, exponent
+        // rebuilt the way the C++ stream spells it.
+        let decimals = (PRECISION - 1) as usize;
+        let formatted = format!("{:.*e}", decimals, value.abs());
+        let (mantissa, exponent) = formatted.split_once('e').unwrap_or((&formatted, "0"));
+        let mantissa = trim_fraction(mantissa);
+        let exponent: i32 = exponent.parse().unwrap_or(0);
+        let sign = if exponent < 0 { '-' } else { '+' };
+
+        format!("{mantissa}e{sign}{:02}", exponent.abs())
+    }
+    else {
+        // Fixed with `PRECISION - 1 - exponent` fraction digits, then trimmed.
+        let decimals = (PRECISION - 1 - exponent).max(0) as usize;
+        trim_fraction(&format!("{:.*}", decimals, value.abs()))
+    };
+
+    if negative {
+        format!("-{body}")
+    }
+    else {
+        body
+    }
+}
+
+/// Strip the trailing zeros `%g` drops, and a dot left with nothing after it.
+fn trim_fraction(text: &str) -> String {
+    if !text.contains('.') {
+        return text.to_string();
+    }
+
+    let trimmed = text.trim_end_matches('0');
+    trimmed.strip_suffix('.').unwrap_or(trimmed).to_string()
+}
+
+#[cfg(test)]
+mod float_text_tests {
+    use super::cxx_float_text;
+
+    /// The names the reference gave the `units` literals.
+    #[test]
+    fn matches_the_default_ostream_formatting() {
+        assert_eq!(cxx_float_text(0.45359237), "0.453592");
+        assert_eq!(cxx_float_text(1609.344), "1609.34");
+        assert_eq!(cxx_float_text(3.785411784), "3.78541");
+        assert_eq!(cxx_float_text(0.104719755), "0.10472");
+        assert_eq!(cxx_float_text(4.44822), "4.44822");
+        assert_eq!(cxx_float_text(1.5), "1.5");
+        assert_eq!(cxx_float_text(1.0), "1");
+        assert_eq!(cxx_float_text(1000.0), "1000");
+        assert_eq!(cxx_float_text(273.15), "273.15");
+        assert_eq!(cxx_float_text(-1.5), "-1.5");
+        assert_eq!(cxx_float_text(0.0), "0");
+        assert_eq!(cxx_float_text(1.0e7), "1e+07");
+        assert_eq!(cxx_float_text(1.23456789e-7), "1.23457e-07");
     }
 }

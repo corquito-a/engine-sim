@@ -416,7 +416,9 @@ impl Arena {
                 }
 
                 if let Some(context) = query.input_context {
-                    if let Some(reference) = state.contexts.resolve_definition(context, structure, self) {
+                    if let Some(reference) =
+                        state.contexts.resolve_definition(context, structure, self)
+                    {
                         if let Some(expansion) = state.expansion(structure, query.input_context) {
                             if let Some(expansion) = expansion {
                                 return (Some(expansion), info);
