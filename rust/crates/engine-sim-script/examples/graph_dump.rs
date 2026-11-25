@@ -28,6 +28,52 @@ use engine_sim_script::Rules;
 /// How many points of a curve `--objects` prints, inclusive of both ends.
 const PROBES: usize = 16;
 
+/// One curve: its domain, its range, whether the samples came out ordered, and
+/// the curve at `PROBES` points across its own domain.
+fn print_curve(prefix: &str, node: usize, function: &engine_sim_core::function::Function, tag: &str) {
+    let (x0, x1) = function.domain();
+    let (y0, y1) = function.range();
+
+    println!(
+        "{},{},{}domain,{:016x},{:016x}",
+        prefix,
+        node,
+        tag,
+        x0.to_bits(),
+        x1.to_bits()
+    );
+    println!(
+        "{},{},{}range,{:016x},{:016x}",
+        prefix,
+        node,
+        tag,
+        y0.to_bits(),
+        y1.to_bits()
+    );
+    println!(
+        "{},{},{}ordered,{}",
+        prefix,
+        node,
+        tag,
+        function.is_ordered() as i32
+    );
+
+    for index in 0..=PROBES {
+        let x = x0 + (x1 - x0) * (index as f64) / (PROBES as f64);
+        let y = function.sample_triangle(x);
+
+        println!(
+            "{},{},{}sample,{},{:016x},{:016x}",
+            prefix,
+            node,
+            tag,
+            index,
+            x.to_bits(),
+            y.to_bits()
+        );
+    }
+}
+
 fn main() {
     let mut rules = Rules::EngineSim;
     let mut values = false;
@@ -104,38 +150,56 @@ fn main() {
             std::process::exit(1);
         }
 
-        let mut functions: Vec<(usize, usize)> = program
-            .function_nodes()
-            .into_iter()
-            .filter_map(|node| node_ids[node].map(|id| (id, node)))
-            .collect();
-        functions.sort();
+        let mut objects: Vec<(usize, usize, &str)> = Vec::new();
+        for internal in program.nodes_of_class("function") {
+            if let Some(id) = node_ids[internal] {
+                objects.push((id, internal, "function"));
+            }
+        }
+        for internal in program.nodes_of_class("fuel") {
+            if let Some(id) = node_ids[internal] {
+                objects.push((id, internal, "fuel"));
+            }
+        }
+        objects.sort();
 
-        for (node, internal) in functions {
-            let function = match program.function(internal) {
-                Some(function) => function,
+        for (node, internal, kind) in objects {
+            if kind == "function" {
+                let function = match program.function(internal) {
+                    Some(function) => function,
+                    None => continue,
+                };
+
+                print_curve("O", node, function, "");
+                continue;
+            }
+
+            let fuel = match program.fuel(internal) {
+                Some(fuel) => fuel,
                 None => continue,
             };
 
-            let (x0, x1) = function.domain();
-            let (y0, y1) = function.range();
+            let scalars = [
+                ("molecular_mass", fuel.molecular_mass()),
+                ("energy_density", fuel.energy_density()),
+                ("density", fuel.density()),
+                ("molecular_afr", fuel.molecular_afr()),
+                (
+                    "burning_efficiency_randomness",
+                    fuel.burning_efficiency_randomness(),
+                ),
+                ("low_efficiency_attenuation", fuel.low_efficiency_attenuation()),
+                ("max_burning_efficiency", fuel.max_burning_efficiency()),
+                ("max_turbulence_effect", fuel.max_turbulence_effect()),
+                ("max_dilution_effect", fuel.max_dilution_effect()),
+            ];
 
-            println!("O,{},domain,{:016x},{:016x}", node, x0.to_bits(), x1.to_bits());
-            println!("O,{},range,{:016x},{:016x}", node, y0.to_bits(), y1.to_bits());
-            println!("O,{},ordered,{}", node, function.is_ordered() as i32);
-
-            for index in 0..=PROBES {
-                let x = x0 + (x1 - x0) * (index as f64) / (PROBES as f64);
-                let y = function.sample_triangle(x);
-
-                println!(
-                    "O,{},sample,{},{:016x},{:016x}",
-                    node,
-                    index,
-                    x.to_bits(),
-                    y.to_bits()
-                );
+            for (field, value) in scalars {
+                println!("O,{},fuel_{},{:016x}", node, field, value.to_bits());
             }
+
+            // The turbulence curve belongs to the function node it references, whose
+            // own block dumps it.
         }
 
         return;

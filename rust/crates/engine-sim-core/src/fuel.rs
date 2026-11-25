@@ -84,6 +84,11 @@ impl Fuel {
         self.max_turbulence_effect
     }
 
+    /// `Fuel::m_turbulenceToFlameSpeedRatio`
+    pub fn turbulence_to_flame_speed_ratio(&self) -> &Function {
+        &self.turbulence_to_flame_speed_ratio
+    }
+
     pub fn low_efficiency_attenuation(&self) -> f64 {
         self.low_efficiency_attenuation
     }

@@ -1101,29 +1101,74 @@ struct ObjectDumper {
         }
     }
 
-    void emitNode(piranha::Node *node) {
-        es_script::FunctionNode *functionNode =
-            dynamic_cast<es_script::FunctionNode *>(node);
-        if (functionNode == nullptr) return;
+    /// `O,<nodeId>,fuel_<field>,<bits>`
+    static void emitScalar(int nodeId, const char *field, double value) {
+        unsigned long long bits;
+        std::memcpy(&bits, &value, sizeof(bits));
+        std::printf("O,%d,%s,%016llx\n", nodeId, field, bits);
+    }
 
-        auto found = nodeIds.find(node);
-        if (found == nodeIds.end()) return;
-        const int nodeId = found->second;
-
-        Function *function = functionNode->generate(&context);
+    /// The curve, under a tag so one object can carry more than one.
+    void emitCurve(int nodeId, const char *tag, Function *function) {
+        const std::string prefix(tag);
 
         double x0, x1;
         function->getDomain(&x0, &x1);
         double y0, y1;
         function->getRange(&y0, &y1);
 
-        emitPair(nodeId, "domain", x0, x1);
-        emitPair(nodeId, "range", y0, y1);
-        std::printf("O,%d,ordered,%d\n", nodeId, function->isOrdered() ? 1 : 0);
+        emitPair(nodeId, (prefix + "domain").c_str(), x0, x1);
+        emitPair(nodeId, (prefix + "range").c_str(), y0, y1);
+        std::printf("O,%d,%sordered,%d\n", nodeId, prefix.c_str(),
+            function->isOrdered() ? 1 : 0);
 
         for (int index = 0; index <= Probes; ++index) {
             const double x = x0 + (x1 - x0) * index / (double)Probes;
-            emitSample(nodeId, index, x, function->sampleTriangle(x));
+            std::printf("O,%d,%ssample,%d,%016llx,", nodeId, prefix.c_str(), index,
+                bitsOf(x));
+            std::printf("%016llx\n", bitsOf(function->sampleTriangle(x)));
+        }
+    }
+
+    static unsigned long long bitsOf(double value) {
+        unsigned long long bits;
+        std::memcpy(&bits, &value, sizeof(bits));
+        return bits;
+    }
+
+    void emitNode(piranha::Node *node) {
+        auto found = nodeIds.find(node);
+        if (found == nodeIds.end()) return;
+        const int nodeId = found->second;
+
+        if (es_script::FunctionNode *functionNode =
+                dynamic_cast<es_script::FunctionNode *>(node)) {
+            emitCurve(nodeId, "", functionNode->generate(&context));
+            return;
+        }
+
+        if (es_script::FuelNode *fuelNode = dynamic_cast<es_script::FuelNode *>(node)) {
+            Fuel fuel;
+            fuelNode->generate(&fuel, &context);
+
+            emitScalar(nodeId, "fuel_molecular_mass", fuel.getMolecularMass());
+            emitScalar(nodeId, "fuel_energy_density", fuel.getEnergyDensity());
+            emitScalar(nodeId, "fuel_density", fuel.getDensity());
+            emitScalar(nodeId, "fuel_molecular_afr", fuel.getMolecularAfr());
+            emitScalar(nodeId, "fuel_burning_efficiency_randomness",
+                fuel.getBurningEfficiencyRandomness());
+            emitScalar(nodeId, "fuel_low_efficiency_attenuation",
+                fuel.getLowEfficiencyAttenuation());
+            emitScalar(nodeId, "fuel_max_burning_efficiency",
+                fuel.getMaxBurningEfficiency());
+            emitScalar(nodeId, "fuel_max_turbulence_effect",
+                fuel.getMaxTurbulenceEffect());
+            emitScalar(nodeId, "fuel_max_dilution_effect",
+                fuel.getMaxDilutionEffect());
+
+            // The turbulence curve is the referenced function node's own object, so
+            // it is dumped there; `Fuel` keeps it as a pointer with no getter.
+            return;
         }
     }
 };

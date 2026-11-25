@@ -25,6 +25,8 @@ use crate::objects::EngineContext;
 use crate::values::Value;
 
 use engine_sim_core::constants::PI;
+use engine_sim_core::fuel::{Fuel, FuelParameters};
+use engine_sim_core::units::{G, KG, KJ, L};
 use engine_sim_core::function::Function;
 use engine_sim_core::units::THOU;
 
@@ -381,15 +383,58 @@ impl Program {
         self.samples.get(&node).map(|points| points.len()).unwrap_or(0)
     }
 
-    /// The nodes whose class is `function`, in graph order.
-    pub fn function_nodes(&self) -> Vec<usize> {
+    /// `FuelNode::generate`: the fuel this node describes, built once. The
+    /// turbulence curve is another data node's object, so generating a fuel can
+    /// generate a function.
+    pub fn fuel(&mut self, node: usize) -> Option<&Fuel> {
+        if self.context.fuel(node).is_some() {
+            return self.context.fuel(node);
+        }
+
+        let turbulence = self
+            .object_source(node, "turbulence_to_flame_speed_ratio")
+            .and_then(|target| self.function(target).cloned())
+            .map(std::sync::Arc::new)
+            .or_else(|| Some(std::sync::Arc::new(Function::new(0, 0.0))))?;
+
+        let parameters = FuelParameters {
+            molecular_mass: self.number(node, "molecular_mass").unwrap_or(100.0 * G),
+            energy_density: self
+                .number(node, "energy_density")
+                .unwrap_or(48.1 * KJ / (1.0 * G)),
+            density: self.number(node, "density").unwrap_or(0.755 * KG / (1.0 * L)),
+            turbulence_to_flame_speed_ratio: turbulence,
+            molecular_afr: self.number(node, "molecular_afr").unwrap_or(25.0 / 2.0),
+            burning_efficiency_randomness: self
+                .number(node, "burning_efficiency_randomness")
+                .unwrap_or(0.5),
+            max_burning_efficiency: self
+                .number(node, "max_burning_efficiency")
+                .unwrap_or(0.8),
+            max_dilution_effect: self.number(node, "max_dilution_effect").unwrap_or(50.0),
+            max_turbulence_effect: self.number(node, "max_turbulence_effect").unwrap_or(2.0),
+            low_efficiency_attenuation: self
+                .number(node, "low_efficiency_attenuation")
+                .unwrap_or(0.6),
+        };
+
+        Some(self.context.generate_fuel(node, parameters))
+    }
+
+    /// The nodes whose class is `name`, in graph order.
+    pub fn nodes_of_class(&self, name: &str) -> Vec<usize> {
         self.graph
             .nodes
             .iter()
             .enumerate()
-            .filter(|(_, data)| class_name(&data.builtin_name) == Some("function"))
+            .filter(|(_, data)| class_name(&data.builtin_name) == Some(name))
             .map(|(node, _)| node)
             .collect()
+    }
+
+    /// The nodes whose class is `function`, in graph order.
+    pub fn function_nodes(&self) -> Vec<usize> {
+        self.nodes_of_class("function")
     }
 
     fn input(&self, node: usize, name: &str) -> Option<Value> {

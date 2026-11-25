@@ -1248,7 +1248,14 @@ ordered, and the curve sampled at 17 points across its own domain — as raw bit
 because that is what has to match. It is the `OBJECTS` gate over all 40 scripts
 in `assets/`.
 
-Two things it caught, neither visible from the graph alone: `NodeContainer::_
+`fuel` is the other shape: its object is parameters, not a curve. Its nine
+numbers come from inputs and its turbulence curve is another node's object, so
+generating a fuel can generate a function — and the `Fuel` itself is a stack
+value in the original while the context owns it here, so the same node always
+answers with the same fuel. Its name is the one field that cannot be compared:
+`Fuel::Parameters` has one, but neither `Fuel` nor `FuelNode` exposes it.
+
+Two things the gate caught, neither visible from the graph alone: `NodeContainer::_
 evaluate` runs the nodes of the container a node owns (a container whose owning
 node nothing evaluates still has to run, or the 65 `add_sample` actions inside
 `assets/main.mr`'s engine never fire — the walk now runs those containers after
