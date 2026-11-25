@@ -15,11 +15,17 @@
 //   script_reference --run <root.mr> <dump.txt> [steps]
 //   script_reference --resolved <root.mr> <dump.txt>
 //   script_reference --errors <root.mr> <dump.txt>
-//   script_reference --graph <root.mr> <dump.txt>
+//   script_reference --graph  <root.mr> <dump.txt>
+//   script_reference --values <root.mr> <dump.txt>
 //       Build the node graph the IR generates (`IrCompilationUnit::build`) and
 //       dump its structure: containers, nodes, ports and connections. This is
 //       what the port's node generation is compared against before any of it
 //       executes.
+//   script_reference --values <root.mr> <dump.txt>
+//       build, initialize and execute, then read every port's value through
+//       `fullCompute` and print `V,<node>,<port>,<type>,<text>`. The type's
+//       channel name is the fifth field when the port has no text form (a
+//       vector, an engine concept), and `-,-` when it is unconnected.
 //       Rebuild the IR, run resolve/validate/build/execute exactly like
 //       `EngineSimApplication::loadScript`, then dump the resulting engine and
 //       a deterministic simulation trace.
@@ -1027,10 +1033,102 @@ struct GraphDumper {
     }
 };
 
-static void dumpGraph(piranha::NodeProgram *program) {
-    GraphDumper dumper;
-    dumper.assign(program->getTopLevelContainer(), -1);
-    dumper.dump(program->getTopLevelContainer(), -1);
+static void dumpGraph(piranha::NodeProgram *program, GraphDumper *dumper) {
+    dumper->assign(program->getTopLevelContainer(), -1);
+    dumper->dump(program->getTopLevelContainer(), -1);
+}
+
+/// Every value the built graph can produce, one line per port.
+///
+/// piranha's value layer is pull-based: operation outputs compute from their
+/// input connections and keep nothing, literals copy their data, and the
+/// builtin `_evaluate`s are empty. So reading `fullCompute` off each port is
+/// the whole of what an evaluation can be observed to do, and it is the same
+/// code path the engine pulls values through.
+struct ValueDumper {
+    const std::map<piranha::Node *, int> &nodeIds;
+
+    explicit ValueDumper(const std::map<piranha::Node *, int> &ids) : nodeIds(ids) {}
+
+    /// A `%g`-formatted float, which is also how a literal names itself.
+    static std::string floatText(double value) {
+        char buffer[64];
+        std::snprintf(buffer, sizeof(buffer), "%g", value);
+        return buffer;
+    }
+
+    void emit(int nodeId, const std::string &port, piranha::NodeOutput *output) {
+        if (output == nullptr) {
+            std::printf("V,%d,%s,-,-\n", nodeId, port.c_str());
+            return;
+        }
+
+        const piranha::ChannelType *type = output->getType();
+        if (type == nullptr) {
+            std::printf("V,%d,%s,?,?\n", nodeId, port.c_str());
+            return;
+        }
+
+        const std::string kind = type->getType();
+        if (type->isEqual(piranha::FundamentalType::FloatType)) {
+            piranha::native_float value;
+            output->fullCompute(&value);
+            std::printf("V,%d,%s,float,%s\n", nodeId, port.c_str(), floatText(value).c_str());
+        }
+        else if (type->isEqual(piranha::FundamentalType::IntType)) {
+            piranha::native_int value;
+            output->fullCompute(&value);
+            std::printf("V,%d,%s,int,%d\n", nodeId, port.c_str(), value);
+        }
+        else if (type->isEqual(piranha::FundamentalType::BoolType)) {
+            piranha::native_bool value;
+            output->fullCompute(&value);
+            std::printf("V,%d,%s,bool,%d\n", nodeId, port.c_str(), (int)value);
+        }
+        else if (type->isEqual(piranha::FundamentalType::StringType)) {
+            piranha::native_string value;
+            output->fullCompute(&value);
+            std::printf("V,%d,%s,string,%s\n", nodeId, port.c_str(), value.c_str());
+        }
+        else {
+            // Not a fundamental channel: a vector or an engine concept, whose
+            // value has no text form. M4 owns those.
+            std::printf("V,%d,%s,%s,-\n", nodeId, port.c_str(), kind.c_str());
+        }
+    }
+
+    void dumpNode(piranha::Node *node) {
+        const int id = nodeIds.at(node);
+
+        for (int i = 0; i < node->getOutputCount(); ++i) {
+            const piranha::Node::NodeOutputPort *port = node->getOutput(i);
+            emit(id, port->name, port->output);
+        }
+
+        for (int i = 0; i < node->getOutputReferenceCount(); ++i) {
+            const piranha::Node::NodeOutputPortReference *reference =
+                node->getOutputReference(i);
+            emit(id, reference->name,
+                (reference->output != nullptr) ? *reference->output : nullptr);
+        }
+    }
+
+    void dump(piranha::NodeContainer *container) {
+        for (int i = 0; i < container->getNodeCount(); ++i) {
+            dumpNode(container->getNode(i));
+        }
+
+        for (int i = 0; i < container->getChildCount(); ++i) {
+            dump(container->getChild(i));
+        }
+    }
+};
+
+static void dumpValues(piranha::NodeProgram *program,
+    const std::map<piranha::Node *, int> &nodeIds)
+{
+    ValueDumper dumper(nodeIds);
+    dumper.dump(program->getTopLevelContainer());
 }
 
 static void emitValue(const char *tag, const char *name, double value) {
@@ -1344,7 +1442,8 @@ int main(int argc, char **argv) {
     }
 
     if ((mode != "--run" && mode != "--check" && mode != "--resolved"
-            && mode != "--errors" && mode != "--graph") || argc < 4) {
+            && mode != "--errors" && mode != "--graph"
+            && mode != "--values") || argc < 4) {
         std::fprintf(stderr, "unknown mode '%s'\n", mode.c_str());
         return 2;
     }
@@ -1519,7 +1618,23 @@ int main(int argc, char **argv) {
     if (mode == "--graph") {
         piranha::NodeProgram program;
         root->build(&program);
-        dumpGraph(&program);
+        GraphDumper dumper;
+        dumpGraph(&program, &dumper);
+        return 0;
+    }
+
+    if (mode == "--values") {
+        piranha::NodeProgram program;
+        root->build(&program);
+        program.initialize();
+        if (!program.execute()) {
+            std::fprintf(stderr, "script execution failed\n");
+            return 1;
+        }
+
+        GraphDumper dumper;
+        dumper.assign(program.getTopLevelContainer(), -1);
+        dumpValues(&program, dumper.nodeIds);
         return 0;
     }
 
