@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Records and checks the node-graph fixtures.
+"""Records and checks the node-graph fixtures, and the values they compute.
 
 `IrCompilationUnit::build` turns resolved IR into the `Node` graph the runtime
 executes. Two programs produce it: `script_reference --graph` (the original) and
@@ -9,6 +9,12 @@ them honest:
     ./run_graph.py --record      # (re)record every `graph/*.graph` from the reference
     ./run_graph.py               # compare the port against the recordings, then
                                  # the real scripts against a live reference
+    ./run_graph.py --values      # the same one layer up: `values/*.values`
+
+`--values` switches both sides to their `--values` mode, which pulls every
+port's value through `fullCompute` instead of describing the graph. The fixtures
+are the ones in `values/`, the suffix is `.values`, and the real-script
+comparison covers `assets/` exactly as it does for graphs.
 
 The fixtures are recorded because they are small enough to read; the real
 scripts (`assets/main.mr` is ~6 500 records) are compared live instead, which
@@ -30,6 +36,15 @@ Record layout, one record per line (see `GraphDumper` in `script_reference.cpp`)
 
 `-` is a null pointer. Node ids follow traversal order: a container's own nodes
 in insertion order, then its children, depth first.
+
+Value records (`--values`) carry one port each:
+
+    V,<nodeId>,<port>,<type>,<text>
+
+`<type>` is `float`, `int`, `bool` or `string` for the fundamental channels and
+the channel type's own name for everything else; `<text>` is the value, or `-`
+when the port has none to give (`%g` floats, `%d` ints, `0`/`1` bools, raw
+strings).
 """
 
 import argparse
@@ -42,6 +57,7 @@ PARITY = pathlib.Path(__file__).resolve().parent
 REPO = PARITY.parents[2]
 RUST = REPO / "rust"
 FIXTURES = PARITY / "graph"
+VALUE_FIXTURES = PARITY / "values"
 WORK = pathlib.Path(os.environ.get("WORK", "/tmp/engine-sim-script-parity"))
 
 IR_DUMP = RUST / "target/release/examples/ir_dump"
@@ -60,7 +76,7 @@ def run(command, **kwargs):
     return subprocess.run(command, capture_output=True, text=True, **kwargs)
 
 
-def graph_from_reference(fixture, test_rules=True):
+def graph_from_reference(fixture, test_rules=True, values=False):
     """The original's graph: its own `build`, fed the Rust parser's IR."""
     # Both sides run from the repository root so the default `es/` search path
     # resolves, which is what `graph_dump` mirrors.
@@ -72,16 +88,18 @@ def graph_from_reference(fixture, test_rules=True):
     dump.write_text(dumped.stdout)
 
     env = dict(os.environ, PARITY_RULES="test" if test_rules else "engine-sim")
-    reference = run([str(REFERENCE), "--graph", str(fixture), str(dump)], env=env, cwd=str(REPO))
+    mode = "--values" if values else "--graph"
+    reference = run([str(REFERENCE), mode, str(fixture), str(dump)], env=env, cwd=str(REPO))
     if reference.returncode != 0:
         return None, reference.stderr.strip().splitlines()[0] if reference.stderr else "graph failed"
 
     return reference.stdout, None
 
 
-def graph_from_port(fixture, rules="piranha"):
+def graph_from_port(fixture, rules="piranha", values=False):
     """The port's own graph, built from its own IR."""
-    port = run([str(GRAPH_DUMP), f"--rules={rules}", str(fixture)], cwd=str(REPO))
+    mode = ["--values"] if values else []
+    port = run([str(GRAPH_DUMP), *mode, f"--rules={rules}", str(fixture)], cwd=str(REPO))
     if port.returncode != 0:
         return None, port.stderr.strip().splitlines()[0] if port.stderr else "graph failed"
 
@@ -91,6 +109,7 @@ def graph_from_port(fixture, rules="piranha"):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--record", action="store_true")
+    parser.add_argument("--values", action="store_true")
     parser.add_argument("fixtures", nargs="*")
     args = parser.parse_args()
 
@@ -98,17 +117,19 @@ def main():
         print("run tools/parity/run_script_parity.sh first (it builds both sides)")
         return 2
 
-    fixtures = sorted(FIXTURES.glob("*.mr"))
+    directory = VALUE_FIXTURES if args.values else FIXTURES
+    suffix = ".values" if args.values else ".graph"
+    fixtures = sorted(directory.glob("*.mr"))
     if args.fixtures:
         wanted = {pathlib.Path(name).stem for name in args.fixtures}
         fixtures = [fixture for fixture in fixtures if fixture.stem in wanted]
 
     failures = 0
     for fixture in fixtures:
-        expected_path = fixture.with_suffix(".graph")
+        expected_path = fixture.with_suffix(suffix)
 
         if args.record:
-            reference, error = graph_from_reference(fixture)
+            reference, error = graph_from_reference(fixture, values=args.values)
             if reference is None:
                 print(f"FAIL {fixture.name}: {error}")
                 failures += 1
@@ -118,7 +139,7 @@ def main():
             print(f"recorded {expected_path.name} ({len(reference.splitlines())} records)")
 
         expected = expected_path.read_text() if expected_path.exists() else ""
-        text, error = graph_from_port(fixture)
+        text, error = graph_from_port(fixture, values=args.values)
 
         if text is None:
             print(f"FAIL {fixture.name}: {error}")
@@ -126,7 +147,7 @@ def main():
             continue
 
         if text != expected:
-            print(f"FAIL {fixture.name}: the port's graph differs from {expected_path.name}")
+            print(f"FAIL {fixture.name}: the port's output differs from {expected_path.name}")
             for line in text.splitlines():
                 if line not in expected.splitlines():
                     print(f"    + {line}")
@@ -143,8 +164,8 @@ def main():
     # The real scripts: no recording, the reference builds them again.
     for relative, rules in SCRIPTS:
         script = REPO / relative
-        expected, error = graph_from_reference(script, test_rules=False)
-        text, port_error = graph_from_port(script, rules)
+        expected, error = graph_from_reference(script, test_rules=False, values=args.values)
+        text, port_error = graph_from_port(script, rules, values=args.values)
 
         if expected is None:
             print(f"FAIL {relative}: the reference could not build it: {error}")
@@ -157,7 +178,7 @@ def main():
             continue
 
         if text != expected:
-            print(f"FAIL {relative}: the port's graph differs from the reference's")
+            print(f"FAIL {relative}: the port's output differs from the reference's")
             for line in text.splitlines():
                 if line not in expected.splitlines():
                     print(f"    + {line}")
@@ -169,7 +190,7 @@ def main():
             print(f"ok   {relative} ({len(text.splitlines())} records)")
 
     if failures:
-        print(f"\n{failures} graph fixture(s) differ")
+        print(f"\n{failures} fixture(s) differ")
         return 1
 
     return 0

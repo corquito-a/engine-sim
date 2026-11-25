@@ -1,0 +1,7 @@
+V,0,__out,float,1.5
+V,1,__out,float,-1.5
+V,3,__out,int,7
+V,4,__out,int,-7
+V,6,__out,int,4
+V,7,__out,int,-4
+V,8,__out,int,4

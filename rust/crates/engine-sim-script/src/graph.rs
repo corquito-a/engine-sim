@@ -32,7 +32,7 @@
 use crate::context::{ContextArena, ContextId};
 use crate::ir::{BinOp, Direction};
 use crate::language_rules::LiteralKind;
-use crate::lower::{Arena, Kind, StructureId};
+use crate::lower::{Arena, Kind, Literal, StructureId};
 use crate::reference::{ReferenceQuery, ReferenceState};
 
 pub type NodeId = usize;
@@ -128,6 +128,9 @@ pub struct GraphNode {
     pub children: Vec<NodeId>,
     pub skeletons: Vec<Skeleton>,
     pub initialized: bool,
+    /// `IrLiteralNode<T>::m_literalData`, injected into the node it generates:
+    /// the exact value the node's `%g` name only approximates.
+    pub literal: Option<Literal>,
 }
 
 /// One `piranha::NodeOutput`. Outputs are shared, so identity matters: two
@@ -162,6 +165,9 @@ pub struct Graph {
     /// a missing port of the port, not a fact about the script, so it is
     /// recorded instead of being swallowed.
     pub missing_builtins: Vec<String>,
+    /// Set when generation hit [`Arena::build_depth`]'s limit: the reference
+    /// recurses until its stack runs out, so there is no graph to compare.
+    pub recursion_exhausted: bool,
 }
 
 impl Graph {
@@ -194,6 +200,7 @@ impl Graph {
             children: Vec::new(),
             skeletons: Vec::new(),
             initialized: false,
+            literal: None,
         });
         self.nodes.len() - 1
     }
@@ -387,6 +394,16 @@ struct ClassSpec {
     output_reference: bool,
     /// `setInterfaceInput` on the first input (`VectorSplitNode`).
     interface_input: bool,
+}
+
+/// `__<rules>__<class>`, and a rules name may itself contain `__`
+/// (`__engine_sim__float_multiply`): the class is everything after the second
+/// separator. Both rule sets register the same class names -- the engine's
+/// library has its own `float_multiply`, not a wrapper around piranha's -- so
+/// the class name, and not the builtin's full name, is what anything shared
+/// keys on.
+pub(crate) fn class_name(builtin: &str) -> Option<&str> {
+    builtin.strip_prefix("__")?.split_once("__").map(|(_, name)| name)
 }
 
 const fn spec(
@@ -698,10 +715,7 @@ const VEHICLE: ClassSpec = spec(
 
 
 fn class_spec(builtin: &str) -> Option<ClassSpec> {
-    // `__<rules>__<class>`, and a rules name may itself contain `__`
-    // (`__engine_sim__float_multiply`): the class is everything after the
-    // second separator.
-    let (_, name) = builtin.strip_prefix("__")?.split_once("__")?;
+    let name = class_name(builtin)?;
 
     Some(match name {
         // `registerBuiltinType<ChannelNode>`
@@ -845,6 +859,8 @@ impl Arena {
     /// does.
     pub fn build_graph(&mut self) -> Graph {
         let mut state = std::mem::take(&mut self.expansion_state);
+        self.build_stack.clear();
+        self.alias_stack.clear();
         let unit = self.units.first().copied();
 
         let graph = match unit {
@@ -889,12 +905,41 @@ impl Arena {
         container: NodeId,
         state: &mut ReferenceState,
     ) -> Option<NodeId> {
+        // A definition that asks for its own node again, in a context below its
+        // own, cannot terminate: `cached_instance` only sees nodes that were
+        // *added*, and the node being generated has not been. Nothing repeats
+        // exactly -- each round pushes a new context level -- so depth is what
+        // notices it. The deepest legitimate build in this repository is 74
+        // levels (`assets/engines/*`), so this leaves room for a script several
+        // times as involved without letting one take the process down.
+        const MAX_DEPTH: usize = 128;
+
+        if self.build_stack.len() >= MAX_DEPTH {
+            graph.recursion_exhausted = true;
+            return None;
+        }
+
+        self.build_stack.push((structure, context));
+        let node = self.generate_node_inner(graph, structure, context, container, state);
+        self.build_stack.pop();
+
+        Some(self.generate_alias_node(graph, node?, state))
+    }
+
+    fn generate_node_inner(
+        &mut self,
+        graph: &mut Graph,
+        structure: StructureId,
+        context: ContextId,
+        container: NodeId,
+        state: &mut ReferenceState,
+    ) -> Option<NodeId> {
         let node = match graph.cached_instance(structure, context, &state.contexts) {
             Some(node) => node,
             None => self.generate_node_uncached(graph, structure, context, container, state)?,
         };
 
-        Some(self.generate_alias_node(graph, node, state))
+        Some(node)
     }
 
     /// `IrParserStructure::_generateNode` and its overrides.
@@ -1070,6 +1115,7 @@ impl Arena {
             graph.nodes[node].name = data.name.data.clone();
             graph.nodes[node].ir_structure = Some(structure);
             graph.nodes[node].context = Some(context);
+            graph.nodes[node].literal = data.literal.clone();
 
             generated_container = None;
             new_container = parent_container;
@@ -1318,6 +1364,22 @@ impl Arena {
         node: NodeId,
         state: &mut ReferenceState,
     ) -> Option<PortId> {
+        if self.alias_cycle(graph, node, false) {
+            return None;
+        }
+
+        self.alias_stack.push((node, false));
+        let result = self.generate_alias_output_inner(graph, node, state);
+        self.alias_stack.pop();
+        result
+    }
+
+    fn generate_alias_output_inner(
+        &mut self,
+        graph: &mut Graph,
+        node: NodeId,
+        state: &mut ReferenceState,
+    ) -> Option<PortId> {
         let primary = graph.nodes[node].primary_output.clone();
 
         if let Some(port) = self.generate_output(graph, node, &primary, state) {
@@ -1339,6 +1401,47 @@ impl Arena {
 
     /// `Node::generateAliasNode`.
     fn generate_alias_node(
+        &mut self,
+        graph: &mut Graph,
+        node: NodeId,
+        state: &mut ReferenceState,
+    ) -> NodeId {
+        if self.alias_cycle(graph, node, true) {
+            return node;
+        }
+
+        self.alias_stack.push((node, true));
+        let result = self.generate_alias_node_inner(graph, node, state);
+        self.alias_stack.pop();
+        result
+    }
+
+    /// The alias walk follows interfaces, and an interface can lead back to
+    /// the node it came from: `Node::generateAliasNode` and
+    /// `generateAliasOutput` both recurse without a visited set, which is how a
+    /// script with a `NoOpNode` instance (the `+` operator) takes the
+    /// original's stack out. Upstream has no answer for such a script, so the
+    /// port stops and records it rather than dying.
+    ///
+    /// The reachable loop is a node answering with itself -- `generateOutput`
+    /// hands back a port whose interface *is* the node -- so a repeat in a row is
+    /// the signal. Re-entering a node a few frames up happens on purpose (an
+    /// interface delegating to the alias walk it belongs to) and still
+    /// terminates, so depth is only the backstop.
+    fn alias_cycle(&mut self, graph: &mut Graph, node: NodeId, is_node: bool) -> bool {
+        const MAX_ALIAS_DEPTH: usize = 32;
+
+        if self.alias_stack.len() >= MAX_ALIAS_DEPTH
+            || self.alias_stack.last() == Some(&(node, is_node))
+        {
+            graph.recursion_exhausted = true;
+            return true;
+        }
+
+        false
+    }
+
+    fn generate_alias_node_inner(
         &mut self,
         graph: &mut Graph,
         node: NodeId,
@@ -1568,9 +1671,7 @@ pub fn dump(graph: &Graph) -> Vec<String> {
         return out;
     };
 
-    let mut containers = vec![None; graph.nodes.len()];
-    let mut nodes = vec![None; graph.nodes.len()];
-    assign(graph, root, &mut containers, &mut nodes, &mut 0, &mut 0);
+    let (containers, nodes) = assign_ids(graph, root);
 
     dump_container(graph, root, None, &containers, &nodes, &mut out);
     out
@@ -1584,6 +1685,15 @@ fn node_id(nodes: &[Option<usize>], node: Option<usize>) -> String {
 }
 
 /// `GraphDumper::assign`: container ids pre-order, node ids in traversal order.
+/// Both the graph dump and the value dump number nodes this way, so a record in
+/// one lines up with the record in the other.
+pub(crate) fn assign_ids(graph: &Graph, root: usize) -> (Vec<Option<usize>>, Vec<Option<usize>>) {
+    let mut containers = vec![None; graph.nodes.len()];
+    let mut nodes = vec![None; graph.nodes.len()];
+    assign(graph, root, &mut containers, &mut nodes, &mut 0, &mut 0);
+    (containers, nodes)
+}
+
 fn assign(
     graph: &Graph,
     container: usize,

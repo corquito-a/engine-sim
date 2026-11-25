@@ -9,6 +9,10 @@
 //! cargo run -p engine-sim-script --example graph_dump -- <root.mr>
 //! ```
 //!
+//! `--values` prints the other half of the gate instead: the records
+//! `script_reference --values` produces by reading every port's value through
+//! `fullCompute`.
+//!
 //! The phases are `resolveAll`'s, in order, because the graph is built from what
 //! resolution decided: definitions, circularity, expansion, then `build`.
 //! References and types are not needed to *build* the graph (they need it, not
@@ -20,15 +24,17 @@ use engine_sim_script::Rules;
 
 fn main() {
     let mut rules = Rules::EngineSim;
+    let mut values = false;
     let mut arguments = std::env::args().skip(1);
 
     let entry = loop {
         match arguments.next() {
             Some(argument) if argument == "--rules=piranha" => rules = Rules::Piranha,
             Some(argument) if argument == "--rules=engine-sim" => rules = Rules::EngineSim,
+            Some(argument) if argument == "--values" => values = true,
             Some(argument) => break argument,
             None => {
-                eprintln!("usage: graph_dump [--rules=piranha|engine-sim] <root.mr> [search-path...]");
+                eprintln!("usage: graph_dump [--values] [--rules=piranha|engine-sim] <root.mr> [search-path...]");
                 std::process::exit(2);
             }
         }
@@ -61,8 +67,23 @@ fn main() {
 
     let graph = arena.build_graph();
 
-    for line in engine_sim_script::graph::dump(&graph) {
+    let records = if values {
+        engine_sim_script::values::dump(&graph)
+    }
+    else {
+        engine_sim_script::graph::dump(&graph)
+    };
+
+    for line in records {
         println!("{}", line);
+    }
+
+    // The original recurses until its stack is gone on a circular build (a
+    // `NoOpNode` instance is the reachable case), so there is no graph to
+    // compare: fail rather than print a half-built one.
+    if graph.recursion_exhausted {
+        eprintln!("error: the script's node generation does not terminate");
+        std::process::exit(1);
     }
 
     // An empty graph and a graph missing its nodes look the same from here, so
