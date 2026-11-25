@@ -193,9 +193,9 @@ python3 "$HERE/run_graph.py" || exit 1
 echo "== gate VALUES: what every port computes =="
 python3 "$HERE/run_graph.py" --values || exit 1
 
-# And the objects the data nodes generate: the curves `function` nodes build out
-# of the samples `add_sample` pushes onto them, and which
-# `generate_harmonic_cam_lobe` writes itself.
+# And the objects the data nodes generate -- curves (`function`, `fuel`,
+# `piston`, `connecting_rod`, `crankshaft`, `vehicle`) and the structure the
+# actions build (`add_cylinder`, `set_cylinder_head`, `add_rod_journal`).
 echo "== gate OBJECTS: the curves the data nodes generate =="
 objects_failures=0
 objects_scripts=0
@@ -219,7 +219,7 @@ if [ "$objects_failures" -ne 0 ]; then
     echo "FAIL: $objects_failures of $objects_scripts scripts differ"
     exit 1
 fi
-echo "-- $objects_scripts scripts, every generated curve identical"
+echo "-- $objects_scripts scripts, every generated object identical"
 
 # And above that: what a run writes, and whether it fails where the original
 # fails.

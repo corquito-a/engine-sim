@@ -21,7 +21,9 @@
 //! `optimize`/`markDeadNodes`, and `free`.
 
 use crate::graph::{class_name, Graph, NodeClass};
-use crate::objects::{CrankData, EngineContext, PistonData, RodData, VehicleData};
+use crate::objects::{
+    CrankData, CylinderRefs, EngineContext, PistonData, RodData, RodJournalData, VehicleData,
+};
 use crate::values::Value;
 
 use engine_sim_core::constants::PI;
@@ -128,9 +130,11 @@ impl Program {
         // `NodeContainer::_evaluate` only ever reaches the nodes of the container
         // a node owns, so a container whose owning node nothing evaluates -- an
         // engine part's group, reached only through an object input -- would never
-        // run. Those are the containers the graph still has nodes in and the walk
-        // above did not touch; run them in pre-order, the way `initialize` visits
-        // them, and let the evaluated flag keep the order deterministic.
+        // run. Those are the containers the walk above did not touch, and they are
+        // run in *reverse* id order: a dependency in this graph points forward
+        // (`add_cylinder`'s bank input depends on a later container), so last-first
+        // is a topological order of the dependency forest -- run the other way
+        // round, a bank's cylinders come out reversed.
         for container in self.unreached_containers(root) {
             for node in self.graph.node(container).nodes.clone() {
                 self.evaluate(node)?;
@@ -183,7 +187,8 @@ impl Program {
     }
 
     /// `Node::_evaluate`, for the classes that have one.
-    /// The containers under `root` that still hold nodes nothing has evaluated.
+    /// The containers under `root` that still hold nodes nothing has evaluated,
+    /// last first (see `execute`).
     fn unreached_containers(&self, root: usize) -> Vec<usize> {
         let mut containers = Vec::new();
         let mut stack = vec![root];
@@ -196,7 +201,7 @@ impl Program {
             }
         }
 
-        containers
+        let mut unreached: Vec<usize> = containers
             .into_iter()
             .filter(|container| {
                 self.graph
@@ -205,7 +210,10 @@ impl Program {
                     .iter()
                     .any(|node| !self.evaluated[*node])
             })
-            .collect()
+            .collect();
+
+        unreached.reverse();
+        unreached
     }
 
     fn run(&mut self, node: usize) -> Result<(), String> {
@@ -381,6 +389,69 @@ impl Program {
                         rolling_resistance: self.number(node, "rolling_resistance").unwrap_or(0.0),
                     },
                 );
+
+                Ok(())
+            }
+
+            // `RodJournalNode::_evaluate`: one angle; the crankshaft and the rod
+            // are stamped onto it by the actions.
+            "rod_journal" => {
+                let mut journal = *self
+                    .context
+                    .rod_journal(node)
+                    .unwrap_or(&RodJournalData::default());
+                journal.angle = self.number(node, "angle").unwrap_or(0.0);
+                self.context.set_rod_journal(node, journal);
+
+                Ok(())
+            }
+
+            // `AddRodJournalNode::_evaluate`: the journal joins this crankshaft's
+            // list, in the order the actions run.
+            "add_rod_journal" => {
+                if let (Some(crankshaft), Some(journal)) = (
+                    self.object_source(node, "crankshaft"),
+                    self.object_source(node, "rod_journal"),
+                ) {
+                    self.context.attach_rod_journal(crankshaft, journal);
+                }
+
+                Ok(())
+            }
+
+            // `AddCylinderNode::_evaluate`: the bank takes the seven objects and
+            // two numbers, in order; the bank's cylinder count is that list.
+            "add_cylinder" => {
+                let cylinder = CylinderRefs {
+                    piston: self.object_source(node, "piston"),
+                    rod: self.object_source(node, "connecting_rod"),
+                    rod_journal: self.object_source(node, "rod_journal"),
+                    intake: self.object_source(node, "intake"),
+                    exhaust: self.object_source(node, "exhaust_system"),
+                    sound_attenuation: self.number(node, "sound_attenuation").unwrap_or(1.0),
+                    primary_length: self.number(node, "primary_length").unwrap_or(0.0),
+                };
+
+                if let Some(bank) = self.object_source(node, "cylinder_bank") {
+                    self.context.add_cylinder(bank, cylinder);
+                }
+
+                Ok(())
+            }
+
+            // `SetCylinderHeadNode::_evaluate`: the bank takes one head, and a
+            // second one fails the run.
+            "set_cylinder_head" => {
+                if let (Some(bank), Some(head)) = (
+                    self.object_source(node, "bank"),
+                    self.object_source(node, "head"),
+                ) {
+                    if !self.context.set_cylinder_head(bank, head) {
+                        let message = "Cylinder bank already has a head".to_string();
+                        self.runtime_error = Some(message.clone());
+                        return Err(message);
+                    }
+                }
 
                 Ok(())
             }
