@@ -1,0 +1,3 @@
+status: error: runtime error: Planned error
+----
+written before the failure

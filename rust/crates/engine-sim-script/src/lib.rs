@@ -30,6 +30,7 @@ pub mod lexer;
 pub mod lower;
 pub mod name;
 pub mod parser;
+pub mod program;
 pub mod reference;
 pub mod resolve;
 pub mod resolved;

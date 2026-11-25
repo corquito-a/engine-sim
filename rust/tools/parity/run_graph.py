@@ -10,11 +10,19 @@ them honest:
     ./run_graph.py               # compare the port against the recordings, then
                                  # the real scripts against a live reference
     ./run_graph.py --values      # the same one layer up: `values/*.values`
+    ./run_graph.py --execute     # and the layer above that: `execute/*.execute`
 
 `--values` switches both sides to their `--values` mode, which pulls every
 port's value through `fullCompute` instead of describing the graph. The fixtures
 are the ones in `values/`, the suffix is `.values`, and the real-script
 comparison covers `assets/` exactly as it does for graphs.
+
+`--execute` switches them to `--execute`, which builds, initializes and executes:
+the nodes that write do it (`console_out` prints), and a node that throws ends
+the run. Two things are compared -- the text written and whether the run
+succeeded -- and the recordings carry both, the status on the first line and the
+raw text after a `----` line. No `assets/` comparison: those scripts print
+nothing, so it would only be a slower way of running the value gate.
 
 The fixtures are recorded because they are small enough to read; the real
 scripts (`assets/main.mr` is ~6 500 records) are compared live instead, which
@@ -58,6 +66,7 @@ REPO = PARITY.parents[2]
 RUST = REPO / "rust"
 FIXTURES = PARITY / "graph"
 VALUE_FIXTURES = PARITY / "values"
+EXECUTE_FIXTURES = PARITY / "execute"
 WORK = pathlib.Path(os.environ.get("WORK", "/tmp/engine-sim-script-parity"))
 
 IR_DUMP = RUST / "target/release/examples/ir_dump"
@@ -106,16 +115,58 @@ def graph_from_port(fixture, rules="piranha", values=False):
     return port.stdout, None
 
 
+def execute_from_reference(fixture, test_rules=True):
+    """The original's run: its own `initialize` and `execute`."""
+    dumped = run([str(IR_DUMP), str(fixture)], cwd=str(REPO))
+    if dumped.returncode != 0:
+        return None, dumped.stderr.strip().splitlines()[0] if dumped.stderr else "parse failed"
+
+    dump = WORK / (fixture.stem + ".ir")
+    dump.write_text(dumped.stdout)
+
+    env = dict(os.environ, PARITY_RULES="test" if test_rules else "engine-sim")
+    result = run([str(REFERENCE), "--execute", str(fixture), str(dump)], env=env, cwd=str(REPO))
+
+    message = result.stderr.strip().splitlines()[0] if result.stderr.strip() else ""
+    return (result.stdout, result.returncode == 0, message), None
+
+
+def execute_from_port(fixture, rules="piranha"):
+    """The port's run, from its own graph."""
+    result = run(
+        [str(GRAPH_DUMP), "--execute", f"--rules={rules}", str(fixture)], cwd=str(REPO)
+    )
+
+    message = result.stderr.strip().splitlines()[0] if result.stderr.strip() else ""
+    return (result.stdout, result.returncode == 0, message)
+
+
+def record_lines(outcome):
+    """`status` on the first line, then the raw text after a `----` marker."""
+    text, succeeded, message = outcome
+    status = "status: ok" if succeeded else f"status: error: {message}"
+    return status + "\n----\n" + text
+
+
+def read_recording(text):
+    status, _, body = text.partition("\n----\n")
+    return status, body
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--record", action="store_true")
     parser.add_argument("--values", action="store_true")
+    parser.add_argument("--execute", action="store_true")
     parser.add_argument("fixtures", nargs="*")
     args = parser.parse_args()
 
     if not GRAPH_DUMP.exists() or (args.record and not REFERENCE.exists()):
         print("run tools/parity/run_script_parity.sh first (it builds both sides)")
         return 2
+
+    if args.execute:
+        return execute_gate(args)
 
     directory = VALUE_FIXTURES if args.values else FIXTURES
     suffix = ".values" if args.values else ".graph"
@@ -188,6 +239,48 @@ def main():
             failures += 1
         else:
             print(f"ok   {relative} ({len(text.splitlines())} records)")
+
+    if failures:
+        print(f"\n{failures} fixture(s) differ")
+        return 1
+
+    return 0
+
+
+def execute_gate(args):
+    """`--execute`: the text a run writes, and whether it succeeded."""
+    fixtures = sorted(EXECUTE_FIXTURES.glob("*.mr"))
+    if args.fixtures:
+        wanted = {pathlib.Path(name).stem for name in args.fixtures}
+        fixtures = [fixture for fixture in fixtures if fixture.stem in wanted]
+
+    failures = 0
+    for fixture in fixtures:
+        expected_path = fixture.with_suffix(".execute")
+
+        if args.record:
+            outcome, error = execute_from_reference(fixture)
+            if outcome is None:
+                print(f"FAIL {fixture.name}: {error}")
+                failures += 1
+                continue
+
+            expected_path.write_text(record_lines(outcome))
+            print(f"recorded {expected_path.name} ({outcome[0]!r})")
+
+        expected_status, expected_text = read_recording(
+            expected_path.read_text() if expected_path.exists() else ""
+        )
+        text, succeeded, message = execute_from_port(fixture)
+
+        status = "status: ok" if succeeded else f"status: error: {message}"
+        if text != expected_text or status != expected_status:
+            print(f"FAIL {fixture.name}: the port's run differs from {expected_path.name}")
+            print(f"    expected {expected_status!r} and {expected_text!r}")
+            print(f"    actual   {status!r} and {text!r}")
+            failures += 1
+        else:
+            print(f"ok   {fixture.name} ({len(text)} characters)")
 
     if failures:
         print(f"\n{failures} fixture(s) differ")

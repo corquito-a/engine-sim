@@ -1,0 +1,41 @@
+// What `execute` is for: the nodes whose `_evaluate` touches the outside world.
+// `console_out` writes its `data` input, so the top-level order of the
+// instances is the order the text comes out in, and the values have to be the
+// ones the value layer computes. Strings carry no escapes, so the line is built
+// from pieces rather than with a newline in a literal.
+node string_channel => __piranha__string {}
+node float_channel => __piranha__float {}
+node int_channel => __piranha__int {}
+node string_literal => __piranha__literal_string {
+    alias output __out [string_channel];
+}
+node float_literal => __piranha__literal_float {
+    alias output __out [float_channel];
+}
+node int_literal => __piranha__literal_int {
+    alias output __out [int_channel];
+}
+node int_to_float => __piranha__int_to_float {
+    input __in [int_channel];
+    alias output __out [float_channel];
+}
+node float_to_string => __piranha__float_to_string {
+    input __in [float_channel];
+    alias output __out [string_channel];
+}
+node string_add => __piranha__string_add {
+    input __in0 [string_channel];
+    input __in1 [string_channel];
+    alias output __out [string_channel];
+}
+node console_out => __piranha__console_out {
+    input data [string_channel];
+}
+
+console_out greeting(data: "hello, ")
+console_out name(data: "engine")
+console_out separator(data: " -- ")
+console_out report(data: "redline: " + float_to_string(6500))
+console_out units(data: " rpm, ")
+console_out spelled(data: 0.45359237)
+console_out done(data: " lb per kg")

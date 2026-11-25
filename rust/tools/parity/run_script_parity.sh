@@ -24,6 +24,10 @@
 #          port's value read through `fullCompute` after the original has built,
 #          initialized and executed the graph.
 #
+#   EXECUTE `tools/parity/execute/` runs the graph through `NodeProgram` and
+#          compares what the nodes that write actually wrote, and whether the
+#          run failed.
+#
 # Requires the staged reference at $REF_SCRIPT (default /tmp/refscript).
 set -euo pipefail
 
@@ -165,6 +169,11 @@ python3 "$HERE/run_graph.py" || exit 1
 # And the layer above it: the values that graph computes.
 echo "== gate VALUES: what every port computes =="
 python3 "$HERE/run_graph.py" --values || exit 1
+
+# And above that: what a run writes, and whether it fails where the original
+# fails.
+echo "== gate EXECUTE: what a run writes =="
+python3 "$HERE/run_graph.py" --execute || exit 1
 
 # Informational: the engine header lines. `head` closes the pipe, and under
 # `pipefail` that used to end the script right here -- before the mismatch check

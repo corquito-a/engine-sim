@@ -1,0 +1,22 @@
+// `throw_runtime_error` is the other side of `execute`: a node that fails the
+// run. Its `throw` input is read at evaluate time, so the nodes *before* it have
+// already written by the time `NodeProgram::execute` returns false, and the ones
+// after it never run.
+node string_channel => __piranha__string {}
+node bool_channel => __piranha__bool {}
+node string_literal => __piranha__literal_string {
+    alias output __out [string_channel];
+}
+node bool_literal => __piranha__literal_bool {
+    alias output __out [bool_channel];
+}
+node console_out => __piranha__console_out {
+    input data [string_channel];
+}
+node throw_runtime_error => __piranha__throw_runtime_error {
+    input throw [bool_channel];
+}
+
+console_out before(data: "written before the failure")
+throw_runtime_error bomb(throw: true)
+console_out after(data: "never written")
