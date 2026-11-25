@@ -10,6 +10,10 @@
 //! after parsing works on [`lower`], which turns that tree into an
 //! identity-preserving arena -- the shape piranha's in-place resolution and
 //! pointer-identity checks actually need.
+//!
+//! The crate has no external dependencies. It does use [`engine_sim_core`], for
+//! the two `es_script` node classes whose value is a `GasSystem` calculation
+//! (`k_28inH2O`, `k_carb`) and would otherwise be a copy of the engine.
 
 pub mod builtin_types;
 pub mod channel_type;
@@ -31,6 +35,7 @@ pub mod resolve;
 pub mod resolved;
 pub mod types;
 pub mod validate;
+pub mod values;
 
 pub use channel_type::{ChannelType, ChannelTypeRegistry};
 pub use context::{ContextArena, ContextId};

@@ -73,6 +73,10 @@ pub struct NodeData {
     pub build: bool,
     /// Set on the instance `auto node ...` creates.
     pub auto_instance: bool,
+    /// The value an expanded literal carries. `IrLiteralNode<T>` injects it
+    /// into the node it generates (`setData`); the node's *name* is only the
+    /// `%g` spelling of it, so the exact value has to travel separately.
+    pub literal: Option<Literal>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -162,6 +166,7 @@ impl NodeData {
             is_interface: false,
             build: true,
             auto_instance: false,
+            literal: None,
         }
     }
 }
@@ -221,6 +226,17 @@ pub struct Arena {
     /// `checkReferences` reads them back. They therefore live here rather than
     /// in a `ReferenceState` local to a single walk.
     pub(crate) expansion_state: crate::reference::ReferenceState,
+    /// The structures `build_graph` is currently generating, with their
+    /// contexts. The original has no such stack -- it recurses until its stack
+    /// is gone -- and one reachable script shape gets there: a builtin
+    /// instance whose alias output has no default value (the "positive"
+    /// operator's `NoOpNode`) has no port for `generateOutput` to find, so
+    /// generation walks back to the same node forever.
+    pub(crate) build_stack: Vec<(StructureId, crate::context::ContextId)>,
+    /// The nodes the alias walk is standing on, for the same reason:
+    /// `generateAliasNode` and `generateAliasOutput` follow interfaces back into
+    /// nodes they already visited.
+    pub(crate) alias_stack: Vec<(usize, bool)>,
 }
 
 impl Arena {
@@ -291,6 +307,7 @@ impl Arena {
                             is_interface: false,
                             build: true,
                             auto_instance: true,
+                            literal: None,
                         }),
                     );
 
@@ -742,6 +759,7 @@ impl Arena {
                 is_interface: false,
                 build: true,
                 auto_instance: false,
+                literal: None,
             }),
         );
 

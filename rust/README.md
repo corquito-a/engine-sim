@@ -98,13 +98,14 @@ export PATH="/tmp/rust-toolchain/bin:$PATH"
 export CARGO_HOME=/tmp/cargo-home
 ```
 
-The crate has **no dependencies**, so it builds offline once the toolchain is
-present.
+The crate has **no external dependencies**, so it builds offline once the
+toolchain is present. It does use this workspace's own `engine-sim-core`, for the
+two `es_script` classes whose value is a `GasSystem` calculation.
 
 ```bash
 cd rust
 cargo build --all-targets     # no warnings
-cargo test                    # 16 unit + 13 gas + 4 end-to-end + 89 script = 122 tests
+cargo test                    # 149 tests (core unit + gas + end-to-end + script + parity gates)
 cargo test --release
 ./tools/parity/run_core_parity.sh 200000   # 8 964 002 bit-identical checkpoints
 ```

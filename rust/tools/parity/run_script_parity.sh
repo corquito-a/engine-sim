@@ -20,6 +20,10 @@
 #          the original (`IrCompilationUnit::build`) and compared against the
 #          recorded structure. The Rust node graph is what has to reproduce it.
 #
+#   VALUES the same fixtures in `tools/parity/values/`, one layer up: every
+#          port's value read through `fullCompute` after the original has built,
+#          initialized and executed the graph.
+#
 # Requires the staged reference at $REF_SCRIPT (default /tmp/refscript).
 set -euo pipefail
 
@@ -153,11 +157,14 @@ else
     echo "recorded rust/crates/engine-sim-script/fixtures/main_engine.trace"
 fi
 
-# The node graph the IR generates. Until the Rust `Node`/`NodeProgram` port
-# exists this compares the reference against its own recordings (`--record`
-# rewrites them); see `run_graph.py`.
+# The node graph the IR generates: every fixture, plus every script under
+# `assets/`, against a live reference (`--record` rewrites the fixtures).
 echo "== gate GRAPH: the assembled node graph of every graph fixture =="
 python3 "$HERE/run_graph.py" || exit 1
+
+# And the layer above it: the values that graph computes.
+echo "== gate VALUES: what every port computes =="
+python3 "$HERE/run_graph.py" --values || exit 1
 
 # Informational: the engine header lines. `head` closes the pipe, and under
 # `pipefail` that used to end the script right here -- before the mismatch check

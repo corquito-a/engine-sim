@@ -1,0 +1,69 @@
+// Every fundamental arithmetic class, on both numeric types: the four
+// operations, and the conversion `2 + 3` needs to reach a float port. These are
+// the values `fullCompute` pulls back out of the wiring.
+node float_channel => __piranha__float {}
+node int_channel => __piranha__int {}
+node float_literal => __piranha__literal_float {
+    alias output __out [float_channel];
+}
+node int_literal => __piranha__literal_int {
+    alias output __out [int_channel];
+}
+node float_add => __piranha__float_add {
+    input __in0 [float_channel];
+    input __in1 [float_channel];
+    alias output __out [float_channel];
+}
+node float_subtract => __piranha__float_subtract {
+    input __in0 [float_channel];
+    input __in1 [float_channel];
+    alias output __out [float_channel];
+}
+node float_multiply => __piranha__float_multiply {
+    input __in0 [float_channel];
+    input __in1 [float_channel];
+    alias output __out [float_channel];
+}
+node float_divide => __piranha__float_divide {
+    input __in0 [float_channel];
+    input __in1 [float_channel];
+    alias output __out [float_channel];
+}
+node int_add => __piranha__int_add {
+    input __in0 [int_channel];
+    input __in1 [int_channel];
+    alias output __out [int_channel];
+}
+node int_subtract => __piranha__int_subtract {
+    input __in0 [int_channel];
+    input __in1 [int_channel];
+    alias output __out [int_channel];
+}
+node int_multiply => __piranha__int_multiply {
+    input __in0 [int_channel];
+    input __in1 [int_channel];
+    alias output __out [int_channel];
+}
+node int_divide => __piranha__int_divide {
+    input __in0 [int_channel];
+    input __in1 [int_channel];
+    alias output __out [int_channel];
+}
+
+node int_to_float => __piranha__int_to_float {
+    input __in [int_channel];
+    alias output __out [float_channel];
+}
+
+private node Holder {
+    input value [float_channel];
+}
+
+Holder sum(value: 1.5 + 2.25)
+Holder difference(value: 10.0 - 0.5)
+Holder product(value: 1.5 * 2.5)
+Holder quotient(value: 1.0 / 4.0)
+Holder isum(value: 2 + 3)
+Holder idifference(value: 10 - 40)
+Holder iproduct(value: 6 * 7)
+Holder iquotient(value: 7 / 2)

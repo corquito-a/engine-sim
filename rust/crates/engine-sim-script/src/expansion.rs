@@ -174,6 +174,7 @@ impl Arena {
             attributes,
         );
         data.definition = definition;
+        data.literal = Some(literal.clone());
 
         let expansion = self.new_structure(structure, Kind::Node(data));
 
@@ -732,7 +733,7 @@ fn literal_text(literal: &Literal) -> String {
 /// Rust's `Display` for `f64` is the shortest round-trip instead, so
 /// `0.45359237_f64 * 1.0` names a node `"0.45359237"` where the original names
 /// it `"0.453592"`; the graph gate sees that as a different node.
-fn cxx_float_text(value: f64) -> String {
+pub(crate) fn cxx_float_text(value: f64) -> String {
     const PRECISION: i32 = 6;
 
     if value == 0.0 {

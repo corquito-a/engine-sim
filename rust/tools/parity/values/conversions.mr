@@ -1,0 +1,48 @@
+// Conversions and strings: `int_to_float`, `string_to_float` (which is
+// `std::stringstream >>`, so a junk string is 0 and a number with a trailing
+// tail is the number), `float_to_string` (the same `%g` spelling a literal
+// names itself with), and `string_add`.
+node float_channel => __piranha__float {}
+node int_channel => __piranha__int {}
+node string_channel => __piranha__string {}
+node float_literal => __piranha__literal_float {
+    alias output __out [float_channel];
+}
+node int_literal => __piranha__literal_int {
+    alias output __out [int_channel];
+}
+node string_literal => __piranha__literal_string {
+    alias output __out [string_channel];
+}
+node int_to_float => __piranha__int_to_float {
+    input __in [int_channel];
+    alias output __out [float_channel];
+}
+node string_to_float => __piranha__string_to_float {
+    input __in [string_channel];
+    alias output __out [float_channel];
+}
+node float_to_string => __piranha__float_to_string {
+    input __in [float_channel];
+    alias output __out [string_channel];
+}
+node string_add => __piranha__string_add {
+    input __in0 [string_channel];
+    input __in1 [string_channel];
+    alias output __out [string_channel];
+}
+
+private node FloatHolder {
+    input value [float_channel];
+}
+
+private node StringHolder {
+    input value [string_channel];
+}
+
+FloatHolder widened(value: 7)
+FloatHolder parsed(value: "12.5 rpm")
+FloatHolder garbage(value: "not a number")
+FloatHolder partial(value: "3.5e2 and then some")
+StringHolder spelled(value: 0.45359237)
+StringHolder joined(value: "a" + "b")

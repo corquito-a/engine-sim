@@ -1,0 +1,13 @@
+V,0,__out,int,7
+V,2,__out,string,12.5 rpm
+V,4,__out,string,not a number
+V,6,__out,string,3.5e2 and then some
+V,8,__out,float,0.453592
+V,10,__out,string,a
+V,11,__out,string,b
+V,12,__out,string,ab
+V,14,__out,float,7
+V,15,__out,float,12.5
+V,16,__out,float,0
+V,17,__out,float,350
+V,18,__out,string,0.453592

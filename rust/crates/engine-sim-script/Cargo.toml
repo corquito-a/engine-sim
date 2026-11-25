@@ -9,6 +9,10 @@ license.workspace = true
 name = "engine_sim_script"
 path = "src/lib.rs"
 
-# Dependency-free, like the core crate: the .mr front end has to stay buildable
-# offline and be verifiable bit-for-bit against the original piranha sources.
+# No external dependencies: the .mr front end has to stay buildable offline and
+# be verifiable bit-for-bit against the original piranha sources. `engine-sim-core`
+# is this workspace's own port of the engine, and the only reason the front end
+# needs it is that two of `es_script`'s node classes compute their value with
+# `GasSystem` (`k_28inH2O` and `k_carb`).
 [dependencies]
+engine-sim-core = { path = "../engine-sim-core" }

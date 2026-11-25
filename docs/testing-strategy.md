@@ -1116,7 +1116,40 @@ V,4,__out,float,6     # int_to_float
 
 `assets/main.mr` yields 1697 lines this way (123 of them `FunctionChannel,-`,
 109 `float,1`, 70 `float,0`, ...), so the mode runs on the engine's own scripts
-too, not just on test-rules probes. Nothing on the port reads it yet.
+too, not just on test-rules probes.
+
+**The port reads it now, and the gate is `values/`.** `values.rs` is
+`full_compute` as a read-only walk of the graph: the literal node's injected
+data, the four arithmetic families, negation, `int_to_float`, `string_to_float`,
+`float_to_string`, `int_to_string`, `string_to_int`, `string_add`, `NoOpNode`'s
+output reference, and `es_script`'s two flow constants (`k_28inH2O`, `k_carb`,
+which are `GasSystem` calls and the reason the crate depends on
+`engine-sim-core`). Everything keys on the class name after the rules prefix,
+because both rule sets register their own `float_multiply`: the engine's library
+wraps no piranha class, it *is* the class. Three fixtures pin the corners the
+engine's scripts do not reach:
+
+| fixture | what it pins |
+|---|---|
+| `arithmetic.mr` | the four operations on `float` and `int`, and the `int_to_float` a `2 + 3` needs to reach a float port |
+| `negation.mr` | `-1.5`, `-7`, and `-(-4)` as two nodes rather than a folded literal |
+| `conversions.mr` | `int_to_float`, `string_to_float`, `float_to_string`, `string_add` -- including `"3.5e2 and then some"` as `350` and `"not a number"` as `0` |
+
+Two behaviours worth naming, because they are C++ library details and not
+arithmetic:
+
+* `string_to_float` is `std::stringstream ss(value); ss >> floatValue`, i.e.
+  `num_get`: the longest parseable prefix, and the value's default `0.0` when
+  there is no number at all. `values::cxx_parse_float` implements exactly that,
+  and `tests/value_tests.rs` pins the cases the fixture uses.
+* `float_to_string` is `ss << value`, the same `%g` spelling `cxx_float_text`
+  already produces for literal names, so `0.45359237` becomes `"0.453592"`.
+
+The gate: `run_graph.py --values` (three fixtures plus every script under
+`assets/`, 7 609 port values on the scripts alone) and `tests/value_tests.rs`
+without a C++ build. What is *not* modelled is what needs `initialize`: the
+vector channels and the engine's own channels print their channel type and `-`,
+which is what the reference prints for them as well.
 
 **Operators took four fixes, and each is a reference line worth knowing.**
 `value: 2 * 3` under test rules builds `int_multiply` + `int_to_float`. The port
@@ -1169,9 +1202,25 @@ class the factory answered `nullptr` for, and `tests/graph_tests.rs` fails a
 fixture that needs one, so a class that falls out of the table shows up as a
 missing node rather than as a shorter graph nobody notices.
 
+**One script shape has no reference answer.** `+2.5` — the "positive" operator
+— builds a `NoOpNode`, whose `__out` is an output *reference* to `__in` rather
+than a port of its own. When that node feeds a container's input, the alias walk
+asks the node for its own output, gets the node back, and recurses until the
+stack is gone: the original **segfaults**. The port used to overflow its stack
+the same way; now `build_graph` stops at the repeat
+(`Graph::recursion_exhausted`: 32 frames in the alias walk, 128 structures deep)
+and `graph_dump` fails with "the script's node generation does not terminate".
+The deepest legitimate build in this repository is 74 structures, so the limits
+are nowhere near a real script. `bool_negate` is in the same family — registered
+as a class, but the grammar's only unary operators are `-` and `+`, so nothing
+reaches it.
+
 **Status.** The port builds the same graph as the reference on all eleven
 fixtures (119 records) and on every script under `assets/` (40 scripts, 20 008
-records), byte for byte. `run_graph.py` and `tests/graph_tests.rs` enforce it,
-and `run_script_parity.sh` runs the former as its `GRAPH` gate. What is *not* ported yet is everything the
-graph is for — the channels behind those classes, and `initialize`, `evaluate`
-and `NodeProgram::execute` — so the graph is only checked for its shape.
+records), byte for byte, and computes the same value on every port of all of
+them. `run_graph.py` and `tests/graph_tests.rs` enforce the graph,
+`run_graph.py --values` and `tests/value_tests.rs` the values, and
+`run_script_parity.sh` runs both as its `GRAPH` and `VALUES` gates. What is *not*
+ported yet is the program around the graph — `NodeProgram::initialize` /
+`execute`, and the channels that need them — so nothing here advances a clock or
+runs a real simulation.

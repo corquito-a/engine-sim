@@ -1,0 +1,37 @@
+// Unary negation, on both numeric types, including `-(-4)` -- a negation of a
+// negation, which is a second node rather than a folded literal.
+//
+// Deliberately absent: the "positive" operator (`NoOpNode`) and `!` on a
+// boolean. The grammar's only unary operators are `-` and `+`, and `+2.5` makes
+// the original recurse until its stack is gone (the node answers its own alias
+// walk with itself), so there is no reference graph to record. `bool_negate` is
+// registered but has no operator that reaches it.
+node float_channel => __piranha__float {}
+node int_channel => __piranha__int {}
+node bool_channel => __piranha__bool {}
+node float_literal => __piranha__literal_float {
+    alias output __out [float_channel];
+}
+node int_literal => __piranha__literal_int {
+    alias output __out [int_channel];
+}
+node float_negate => __piranha__float_negate {
+    input __in [float_channel];
+    alias output __out [float_channel];
+}
+node int_negate => __piranha__int_negate {
+    input __in [int_channel];
+    alias output __out [int_channel];
+}
+
+private node FloatHolder {
+    input value [float_channel];
+}
+
+private node IntHolder {
+    input value [int_channel];
+}
+
+FloatHolder negated(value: -1.5)
+IntHolder inegated(value: -7)
+IntHolder idoublenegated(value: -(-4))
