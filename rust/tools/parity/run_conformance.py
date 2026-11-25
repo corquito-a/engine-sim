@@ -14,15 +14,16 @@ For every `.mr` fixture under `piranha/test/sdl/`:
   3. ask the port for its own (`error_dump --rules=piranha`);
   4. compare the two multisets.
 
-Errors the reference reports on an *unspecified* token (line `2147483647`) are
-excluded by default. They are expansion-time diagnostics about the *literal*
-builtin nodes: `IrValueLiteral::_expand` builds an `IrLiteralNode` whose
-definition comes from the unit (`resolveBuiltinNodeDefinition`), and when a
-fixture does not define `__piranha__literal_*` itself the expansion resolves the
-empty type name and reports `UndefinedNodeType` -- piranha's own
-`// TODO: raise error, literal type not defined`. They are faithful, but the
-port cannot produce them until expansion is ported, so scoring them now would
-report the same gap under a misleading name. `--strict` keeps them.
+Every error is scored, including the ones the reference reports on an
+*unspecified* token (line `2147483647`). Those are expansion-time diagnostics
+about the *literal* builtin nodes: `IrValueLiteral::_expand` builds an
+`IrLiteralNode` whose definition comes from the unit
+(`resolveBuiltinNodeDefinition`), and when a fixture does not define
+`__piranha__literal_*` itself the node keeps the default type token and its own
+`resolveDefinitions()` reports `UndefinedNodeType` against it. The port
+reproduces that path (`expansion.rs`), so the errors are comparable like any
+other; there is no longer a reason to exclude them, and excluding them would
+hide real regressions in the expansion phase.
 
 The expected lists come from the reference, not from the gtest literals: the
 `findError(list, code, line)` assertions in `piranha/test/*.cpp` cover only a
@@ -33,8 +34,6 @@ differences by error code so the report says *which* phase each one belongs to:
 
     MATCH            the port and the reference agree, code for code
     DIFF             they disagree -- the only bucket that is a port defect
-    UNSPECIFIED      excluded: the reference's expected errors sit on an
-                     unspecified token (see above), or the fixture has none
     PARSE-SYNTAX     the fixture does not parse, and no oracle exists for it
     PARSE-IMPORT     the fixture's import target is missing from the repository
 """
@@ -72,7 +71,6 @@ def oracle_codes(fixture, dump):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--summary", action="store_true", help="group differences by code")
-    parser.add_argument("--strict", action="store_true", help="score unspecified-token errors too")
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("fixtures", nargs="*")
     args = parser.parse_args()
@@ -116,11 +114,6 @@ def main():
             continue
 
         actual = run([str(ERROR_DUMP), "--rules=piranha", str(fixture)]).stdout.split()
-
-        if not args.strict:
-            dropped = sum(1 for code in expected if code.endswith(",2147483647"))
-            status["UNSPECIFIED"] += dropped
-            expected = [code for code in expected if not code.endswith(",2147483647")]
 
         if collections.Counter(expected) == collections.Counter(actual):
             status["MATCH"] += 1

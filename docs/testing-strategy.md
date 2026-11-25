@@ -413,7 +413,9 @@ work queue, and it is short enough to work through fixture by fixture.
 Two fidelity fixes came out of the triage. The harness now always writes
 `m_typeInfo` (`IrAttributeDefinition`'s constructor initialises only
 `m_typeDefinition`, so an untouched `m_typeInfo` is uninitialised memory). And
-the runner excludes unspecified-token errors by default, `--strict` keeps them.
+the runner excluded unspecified-token errors by default, `--strict` kept them --
+an exclusion that has since been retired, because it turned out to be hiding a
+port gap rather than an oracle artefact: "The unspecified-token errors" below.
 
 `PARSE` 19 was listed here as the parser's own to-do list. That reading turned
 out to be wrong -- they are fixtures whose expected errors come from bison, or
@@ -893,9 +895,10 @@ That closes the language gate:
 | `R0061` extra | 1 | 0 |
 | `R0080` on the wrong link | 1 | 0 |
 
-Zero diffs is not "the port is finished": 19 fixtures still fail to parse and
-171 are excluded, and the next two sections say why neither is a gap in the IR
-pipeline.
+Zero diffs is not "the port is finished": 19 fixtures still fail to parse, and
+171 errors were still excluded at that point. The next two sections say why
+neither was a gap in the IR pipeline, and the third records what it took to
+retire the exclusion.
 
 **The lesson this unit adds:** a phase with two entry points looks almost right
 with one of them, because the second only changes *which context* a structure is
@@ -947,10 +950,81 @@ never shipped. Both sides abort on a failed import: the port in `resolve::load_g
 the oracle in its own `analyze`, which needs the imported unit to exist. So
 reporting `IO0010` in the port would change nothing here.
 
-That is the honest shape of the gate: **94 scored, 0 diffs, 19 unscorable, 171
-excluded.** The last bucket is the interesting one for what to do next -- those
-fixtures' expected errors sit on an *unspecified* token (`line 2147483647`),
-which the reference produces when expanding a literal whose builtin node the
-fixture does not define. `--strict` counts them (`DIFF 29`, all `R0010`), and
-reproducing them means reproducing the original's `// TODO: raise error, literal
-type not defined` path, not a port fix.
+Those 19 are the whole of the unscorable population. Everything the harness can
+parse and dump is now scored, with nothing excluded -- see the next section for
+the 171 errors that used to be.
+
+## The unspecified-token errors
+
+171 of the reference's errors sat on an unspecified token (`line 2147483647`) and
+were excluded from the gate, on the reading that they were an artefact of the
+oracle rather than something the port could be wrong about. That reading was
+wrong in a subtle way: the errors were faithful, and the port simply did not
+produce them.
+
+The shrink is two lines. Against the reference:
+
+```mr
+private node A {
+    input x: 1;
+}
+
+A a(foo: false)
+```
+
+```
+reference: R0010,1 R0010,2147483647
+port:      R0010,1
+```
+
+`R0010,1` is the undefined type on line 1. The other is a literal.
+
+**What the original does.** `IrValueLiteral::_expand` looks the literal's builtin
+name up in the rules, looks that name up in the unit
+(`resolveBuiltinNodeDefinition`), and has a `nullptr` branch for each step --
+both of them *comment-only*: `// TODO: raise error, literal type not defined or
+not available`. It then carries on and builds the expansion anyway, with
+`setDefinition(nodeDefinition)` and that `nodeDefinition` still null. The node is
+an `IrLiteralNode`, and `IrLiteralNode` never sets `m_type` -- `setName` assigns
+the node's *name*, not its type. So the expansion's own `resolveDefinitions()`
+calls `resolveNodeDefinition()` with the empty type name, finds nothing, and
+reports `UndefinedNodeType` against `getTypeToken()`: a default-constructed
+`IrTokenInfo`, whose `lineStart` is `INT_MAX`. `es/engine_sim.mr` never shows
+this because its stdlib defines every `__engine_sim__literal_*` it uses.
+
+**What the port did.** `expand_literal` mirrored the two comments as *early
+returns* -- `let Some(definition) = definition else { return; }` -- which reads
+like a faithful transcription of a TODO and behaves like a rule the original does
+not have. Removing the return, letting the node carry `definition: None` and an
+unspecified type token, and calling `resolve_definitions` on it reproduces every
+one of the 171 errors. The counts came out right on the first run: expansion is
+already keyed by `(structure, context)`, so a literal inside a definition used
+twice expands twice, exactly as upstream.
+
+**One line-number detail.** `error_dump` printed `error.location.line`, and a
+synthesised token's line is `0` in the port, so these errors would have come out
+as `R0010,0` against the reference's `R0010,2147483647`. `dump.rs` already
+translated the sentinel for `--lines` dumps; that translation is now
+`Token::line_start()`, and the three places that show a line -- `--lines` dumps,
+`--errors`, and `format_line` -- use it, which is also what `IrTokenInfo`'s
+constructor says the default token is.
+
+**Consequences of the change:**
+
+| | before | after |
+|---|---|---|
+| gate | `MATCH 94, UNSPECIFIED 171`, `--strict` `DIFF 29` | `MATCH 94`, no exclusions |
+| `--strict` | kept the excluded errors | removed -- it no longer means anything |
+| negative fixtures | 20 | 21 (`literal_type_not_defined.mr`) |
+| `run_script_parity.sh` | `PASS: 16263` | `PASS: 16263` (no change) |
+
+The script-parity gate is the control: nothing in the engine's own scripts
+changed, because they define their literal builtins. Only a fixture that leaves
+its `__*__literal_*` definitions out gains errors.
+
+One existing unit test had been passing for the wrong reason and had to change:
+`types::tests::an_argument_that_converts_is_accepted` compares a string literal
+against a string port in a fixture that declared only `literal_int`, so the
+string literal had no definition and now reports `R0010` -- which is what the
+reference reports for it. The fixture gained a `literal_string` definition, and
+the test now reports only the type errors it is about.

@@ -131,11 +131,17 @@ impl CompilationError {
         matches!(&self.instantiation, Some(frames) if !frames.is_empty())
     }
 
-    /// The one-line form `es_script::Compiler::printError` writes.
+    /// The one-line form `es_script::Compiler::printError` writes. The line is
+    /// `lineStart`, so an error on a synthesised token prints `2147483647`
+    /// rather than the port's internal `0` -- the same translation the dumps do.
     pub fn format_line(&self, unit_stem: &str) -> String {
         format!(
             "{}({}): error {}{}: {}",
-            unit_stem, self.location.line, self.code.stage, self.code.code, self.code.info
+            unit_stem,
+            self.location.line_start(),
+            self.code.stage,
+            self.code.code,
+            self.code.info
         )
     }
 }

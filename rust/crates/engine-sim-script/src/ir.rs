@@ -54,6 +54,19 @@ impl Token {
     pub fn is_specified(&self) -> bool {
         self.specified
     }
+
+    /// `IrTokenInfo::lineStart`: `INT_MAX` for a default-constructed token.
+    /// The port stores "no position" as `line == 0`; the two consumers that
+    /// report a line to the original (`--lines` dumps and `--errors`) have to
+    /// print the original's sentinel or the summary folding differs.
+    pub fn line_start(&self) -> u32 {
+        if self.line == 0 {
+            i32::MAX as u32
+        }
+        else {
+            self.line
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

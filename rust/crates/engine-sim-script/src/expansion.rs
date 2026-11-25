@@ -138,6 +138,15 @@ impl Arena {
 
     /// `IrValueLiteral::_expand` -- the literal becomes a literal node of the
     /// builtin type the rules pick for its type code.
+    ///
+    /// The builtin definition is looked up, never required: the original's two
+    /// `nullptr` branches are comment-only TODOs and expansion continues
+    /// either way. When the unit does not define `__piranha__literal_*` the
+    /// node is left with no definition *and no type token* (`IrLiteralNode`
+    /// never sets `m_type`, only `setName`), so its own
+    /// `resolveDefinitions()` reports `UndefinedNodeType` against a
+    /// default-constructed token -- `R0010` on the unspecified line. That is
+    /// the whole of the port's unspecified-token error population.
     fn expand_literal(
         &mut self,
         structure: StructureId,
@@ -145,31 +154,26 @@ impl Arena {
         context: ContextId,
         state: &mut ReferenceState,
     ) {
-        let Some(builtin) = self.rules().literal_builtin(literal_kind(literal)) else {
-            // "TODO: raise error, literal not supported"
-            return;
-        };
+        // "TODO: raise error, literal not supported" -- the original keeps the
+        // empty name and carries on.
+        let builtin = self.rules().literal_builtin(literal_kind(literal)).unwrap_or("");
 
         let Some(unit) = self.entry(structure).parent_unit else {
             return;
         };
 
+        // "TODO: raise error, literal type not defined or not available"
         let (definition, _count) = self.resolve_builtin_node_definition(unit, builtin);
-
-        let Some(definition) = definition else {
-            // "TODO: raise error, literal type not defined or not available"
-            return;
-        };
 
         let attributes = self.new_structure(structure, Kind::AttributeList(Vec::new()));
 
         let mut data = NodeData::new(
-            Token::new(builtin),
+            Token::unspecified(),
             Token::unspecified(),
             Token::new(&format!("\"{}\"", literal_text(literal))),
             attributes,
         );
-        data.definition = Some(definition);
+        data.definition = definition;
 
         let expansion = self.new_structure(structure, Kind::Node(data));
 

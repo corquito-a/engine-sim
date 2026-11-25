@@ -40,7 +40,7 @@ fn write_token(text: &mut String, lines: bool, token: &Token) {
         // in the original: `lineStart == INT_MAX`, a span that cannot lower a
         // summary's line. Writing 0 here would make the oracle fold a line 0
         // into every summary it touches.
-        let line = if token.line == 0 { i32::MAX as u32 } else { token.line };
+        let line = token.line_start();
 
         text.push_str(&format!(
             "(tok {} {} {})",
