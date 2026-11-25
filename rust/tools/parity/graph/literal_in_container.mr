@@ -1,0 +1,12 @@
+// A literal that belongs to a container rather than to the top level: the
+// output port's default value is expanded inside the instance's own container.
+node float_channel => __piranha__float {}
+node float_literal => __piranha__literal_float {
+    alias output __out [float_channel];
+}
+
+private node Constant {
+    alias output result [float_channel]: 1.5;
+}
+
+Constant c()
