@@ -1170,6 +1170,57 @@ struct ObjectDumper {
             // it is dumped there; `Fuel` keeps it as a pointer with no getter.
             return;
         }
+
+        if (es_script::PistonNode *pistonNode = dynamic_cast<es_script::PistonNode *>(node)) {
+            // `generate` wants a bank, a rod and an index, but `Piston::initialize`
+            // only copies them: the five numbers it reads are the node's own.
+            Piston piston;
+            pistonNode->generate(&piston, nullptr, nullptr, 0);
+
+            emitScalar(nodeId, "piston_mass", piston.getMass());
+            emitScalar(nodeId, "piston_blowby", piston.getBlowbyK());
+            emitScalar(nodeId, "piston_compression_height", piston.getCompressionHeight());
+            emitScalar(nodeId, "piston_wrist_pin_position", piston.getWristPinLocation());
+            emitScalar(nodeId, "piston_displacement", piston.getDisplacement());
+            return;
+        }
+
+        if (es_script::ConnectingRodNode *rodNode =
+                dynamic_cast<es_script::ConnectingRodNode *>(node)) {
+            // The crankshaft and the piston are pointers `initialize` copies, and
+            // with no journals on the rod the angle loop does not run.
+            ConnectingRod rod;
+            rodNode->generate(&rod, nullptr, nullptr, 0);
+
+            emitScalar(nodeId, "rod_mass", rod.getMass());
+            emitScalar(nodeId, "rod_moment_of_inertia", rod.getMomentOfInertia());
+            emitScalar(nodeId, "rod_center_of_mass", rod.getCenterOfMass());
+            emitScalar(nodeId, "rod_length", rod.getLength());
+            emitScalar(nodeId, "rod_slave_throw", rod.getSlaveThrow());
+            return;
+        }
+
+        if (es_script::CrankshaftNode *crankNode =
+                dynamic_cast<es_script::CrankshaftNode *>(node)) {
+            Crankshaft crankshaft;
+            crankNode->generate(&crankshaft, &context);
+
+            emitScalar(nodeId, "crank_throw", crankshaft.getThrow());
+            emitScalar(nodeId, "crank_flywheel_mass", crankshaft.getFlywheelMass());
+            emitScalar(nodeId, "crank_mass", crankshaft.getMass());
+            emitScalar(nodeId, "crank_friction_torque", crankshaft.getFrictionTorque());
+            emitScalar(nodeId, "crank_moment_of_inertia", crankshaft.getMomentOfInertia());
+            emitScalar(nodeId, "crank_position_x", crankshaft.getPosX());
+            emitScalar(nodeId, "crank_position_y", crankshaft.getPosY());
+            emitScalar(nodeId, "crank_tdc", crankshaft.getTdc());
+
+            // `~Crankshaft` asserts the journal array is gone, so an initialized
+            // one has to be destroyed before it goes out of scope. (The context
+            // keeps the pointer `generate` handed it; nothing in the dump asks for
+            // it again.)
+            crankshaft.destroy();
+            return;
+        }
     }
 };
 

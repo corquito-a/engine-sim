@@ -1255,6 +1255,15 @@ value in the original while the context owns it here, so the same node always
 answers with the same fuel. Its name is the one field that cannot be compared:
 `Fuel::Parameters` has one, but neither `Fuel` nor `FuelNode` exposes it.
 
+`piston`, `connecting_rod` and `crankshaft` are the third shape: the node holds
+`Piston::Parameters`/`ConnectingRod::Parameters`/`Crankshaft::Parameters` and
+`generate` stamps in the pointers and the journal count, so the object is the
+*action's* (`add_cylinder`, `add_rod_journal`) and the node's own data is what
+the dump compares. The oracle builds a throwaway object to read them — the
+pointers `initialize` copies can be null, and an initialized `Crankshaft` has to
+be `destroy()`ed before it goes out of scope, since `~Crankshaft` asserts its
+journal array is gone.
+
 Two things the gate caught, neither visible from the graph alone: `NodeContainer::_
 evaluate` runs the nodes of the container a node owns (a container whose owning
 node nothing evaluates still has to run, or the 65 `add_sample` actions inside
