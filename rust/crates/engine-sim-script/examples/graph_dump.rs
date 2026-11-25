@@ -12,7 +12,9 @@
 //! `--values` prints the other half of the gate instead: the records
 //! `script_reference --values` produces by reading every port's value through
 //! `fullCompute`. `--execute` runs the graph the way `NodeProgram` does and
-//! prints whatever its side-effecting nodes wrote.
+//! prints whatever its side-effecting nodes wrote. `--objects` runs it and then
+//! prints the objects the data nodes generate -- the curves `function` nodes
+//! build out of the samples `add_sample` pushed onto them.
 //!
 //! The phases are `resolveAll`'s, in order, because the graph is built from what
 //! resolution decided: definitions, circularity, expansion, then `build`.
@@ -23,10 +25,14 @@ use engine_sim_script::lower::Arena;
 use engine_sim_script::resolve::load_graph;
 use engine_sim_script::Rules;
 
+/// How many points of a curve `--objects` prints, inclusive of both ends.
+const PROBES: usize = 16;
+
 fn main() {
     let mut rules = Rules::EngineSim;
     let mut values = false;
     let mut execute = false;
+    let mut objects = false;
     let mut arguments = std::env::args().skip(1);
 
     let entry = loop {
@@ -35,9 +41,10 @@ fn main() {
             Some(argument) if argument == "--rules=engine-sim" => rules = Rules::EngineSim,
             Some(argument) if argument == "--values" => values = true,
             Some(argument) if argument == "--execute" => execute = true,
+            Some(argument) if argument == "--objects" => objects = true,
             Some(argument) => break argument,
             None => {
-                eprintln!("usage: graph_dump [--values|--execute] [--rules=piranha|engine-sim] <root.mr> [search-path...]");
+                eprintln!("usage: graph_dump [--values|--execute|--objects] [--rules=piranha|engine-sim] <root.mr> [search-path...]");
                 std::process::exit(2);
             }
         }
@@ -79,6 +86,55 @@ fn main() {
         if let Err(message) = result {
             eprintln!("runtime error: {}", message);
             std::process::exit(1);
+        }
+
+        return;
+    }
+
+    if objects {
+        // The ids the reference prints are the ones `GraphDumper::assign` gives
+        // out (a container walk), not the graph's internal indices.
+        let root = graph.root.unwrap_or(0);
+        let (_, node_ids) = engine_sim_script::graph::assign_ids(&graph, root);
+
+        let mut program = engine_sim_script::program::Program::new(graph);
+        if let Err(message) = program.execute() {
+            eprintln!("runtime error: {}", message);
+            std::process::exit(1);
+        }
+
+        let mut functions: Vec<(usize, usize)> = program
+            .function_nodes()
+            .into_iter()
+            .filter_map(|node| node_ids[node].map(|id| (id, node)))
+            .collect();
+        functions.sort();
+
+        for (node, internal) in functions {
+            let function = match program.function(internal) {
+                Some(function) => function,
+                None => continue,
+            };
+
+            let (x0, x1) = function.domain();
+            let (y0, y1) = function.range();
+
+            println!("O,{},domain,{:016x},{:016x}", node, x0.to_bits(), x1.to_bits());
+            println!("O,{},range,{:016x},{:016x}", node, y0.to_bits(), y1.to_bits());
+            println!("O,{},ordered,{}", node, function.is_ordered() as i32);
+
+            for index in 0..=PROBES {
+                let x = x0 + (x1 - x0) * (index as f64) / (PROBES as f64);
+                let y = function.sample_triangle(x);
+
+                println!(
+                    "O,{},sample,{},{:016x},{:016x}",
+                    node,
+                    index,
+                    x.to_bits(),
+                    y.to_bits()
+                );
+            }
         }
 
         return;

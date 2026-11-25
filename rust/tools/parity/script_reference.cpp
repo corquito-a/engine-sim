@@ -20,6 +20,9 @@
 //       dump its structure: containers, nodes, ports and connections. This is
 //       what the port's node generation is compared against before any of it
 //       executes.
+//   script_reference --objects <root.mr> <dump.txt>
+//       build, initialize, execute, then generate and dump the objects the data
+//       nodes produce (`O,...` lines) -- the first of M4's classes, `function`.
 //   script_reference --engine <root.mr> <dump.txt>
 //       build, initialize and execute, then dump the engine the script
 //       configured (`E,...` lines) without stepping the simulation. This is
@@ -1046,6 +1049,89 @@ static void dumpGraph(piranha::NodeProgram *program, GraphDumper *dumper) {
     dumper->dump(program->getTopLevelContainer(), -1);
 }
 
+/// The objects the data nodes generate, one block per node.
+///
+/// A data node is an `ObjectReferenceNode`: its `_evaluate` sets its output to
+/// itself and reads its inputs into the node's own fields, and the object is
+/// built by `generate(context)` the first time something asks for it. So the
+/// node -- not the object -- is where `add_sample` puts the samples, and
+/// generation is the only moment the *curve* exists to be compared. Each block
+/// is the domain, the range, whether the samples came out ordered, and the
+/// curve sampled at a fixed grid across its own domain:
+///
+///   O,<nodeId>,domain,<x0 bits>,<x1 bits>
+///   O,<nodeId>,range,<y0 bits>,<y1 bits>
+///   O,<nodeId>,ordered,<0|1>
+///   O,<nodeId>,sample,<index>,<x bits>,<y bits>
+///
+/// Only `function` is here: it is the first of M4's data nodes.
+struct ObjectDumper {
+    /// How many points of the curve are printed, inclusive of both ends.
+    static const int Probes = 16;
+
+    const std::map<piranha::Node *, int> &nodeIds;
+    es_script::EngineContext context;
+
+    explicit ObjectDumper(const std::map<piranha::Node *, int> &ids) : nodeIds(ids) {}
+
+    static void emitPair(
+        int nodeId, const char *field, double a, double b)
+    {
+        unsigned long long x, y;
+        std::memcpy(&x, &a, sizeof(x));
+        std::memcpy(&y, &b, sizeof(y));
+        std::printf("O,%d,%s,%016llx,%016llx\n", nodeId, field, x, y);
+    }
+
+    static void emitBit(int nodeId, const char *field, double value) {
+        unsigned long long bits;
+        std::memcpy(&bits, &value, sizeof(bits));
+        std::printf("O,%d,%s,%016llx\n", nodeId, field, bits);
+    }
+
+    void dump(piranha::NodeContainer *container) {
+        for (int i = 0; i < container->getNodeCount(); ++i) {
+            emitNode(container->getNode(i));
+        }
+
+        for (int i = 0; i < container->getChildCount(); ++i) {
+            dump(container->getChild(i));
+        }
+    }
+
+    void emitNode(piranha::Node *node) {
+        es_script::FunctionNode *functionNode =
+            dynamic_cast<es_script::FunctionNode *>(node);
+        if (functionNode == nullptr) return;
+
+        auto found = nodeIds.find(node);
+        if (found == nodeIds.end()) return;
+        const int nodeId = found->second;
+
+        Function *function = functionNode->generate(&context);
+
+        double x0, x1;
+        function->getDomain(&x0, &x1);
+        double y0, y1;
+        function->getRange(&y0, &y1);
+
+        emitPair(nodeId, "domain", x0, x1);
+        emitPair(nodeId, "range", y0, y1);
+        std::printf("O,%d,ordered,%d\n", nodeId, function->isOrdered() ? 1 : 0);
+
+        for (int index = 0; index <= Probes; ++index) {
+            const double x = x0 + (x1 - x0) * index / (double)Probes;
+            emitBit(nodeId, "sample", function->sampleTriangle(x));
+        }
+    }
+};
+
+static void dumpObjects(piranha::NodeProgram *program, GraphDumper *dumper) {
+    dumper->assign(program->getTopLevelContainer(), -1);
+    ObjectDumper objects(dumper->nodeIds);
+    objects.dump(program->getTopLevelContainer());
+}
+
 /// Every value the built graph can produce, one line per port.
 ///
 /// piranha's value layer is pull-based: operation outputs compute from their
@@ -1452,7 +1538,7 @@ int main(int argc, char **argv) {
     if ((mode != "--run" && mode != "--check" && mode != "--resolved"
             && mode != "--errors" && mode != "--graph"
             && mode != "--values" && mode != "--execute"
-            && mode != "--engine") || argc < 4) {
+            && mode != "--engine" && mode != "--objects") || argc < 4) {
         std::fprintf(stderr, "unknown mode '%s'\n", mode.c_str());
         return 2;
     }
@@ -1629,6 +1715,20 @@ int main(int argc, char **argv) {
         root->build(&program);
         GraphDumper dumper;
         dumpGraph(&program, &dumper);
+        return 0;
+    }
+
+    if (mode == "--objects") {
+        piranha::NodeProgram program;
+        root->build(&program);
+        program.initialize();
+        if (!program.execute()) {
+            std::fprintf(stderr, "script execution failed\n");
+            return 1;
+        }
+
+        GraphDumper dumper;
+        dumpObjects(&program, &dumper);
         return 0;
     }
 

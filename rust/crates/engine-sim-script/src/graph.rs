@@ -1705,7 +1705,7 @@ fn node_id(nodes: &[Option<usize>], node: Option<usize>) -> String {
 /// `GraphDumper::assign`: container ids pre-order, node ids in traversal order.
 /// Both the graph dump and the value dump number nodes this way, so a record in
 /// one lines up with the record in the other.
-pub(crate) fn assign_ids(graph: &Graph, root: usize) -> (Vec<Option<usize>>, Vec<Option<usize>>) {
+pub fn assign_ids(graph: &Graph, root: usize) -> (Vec<Option<usize>>, Vec<Option<usize>>) {
     let mut containers = vec![None; graph.nodes.len()];
     let mut nodes = vec![None; graph.nodes.len()];
     assign(graph, root, &mut containers, &mut nodes, &mut 0, &mut 0);

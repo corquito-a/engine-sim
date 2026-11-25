@@ -21,7 +21,12 @@
 //! `optimize`/`markDeadNodes`, and `free`.
 
 use crate::graph::{class_name, Graph, NodeClass};
+use crate::objects::EngineContext;
 use crate::values::Value;
+
+use engine_sim_core::function::Function;
+
+use std::collections::BTreeMap;
 
 /// What `NodeProgram` owns that is not the graph: run state and the console's
 /// text. piranha writes to `std::cout` directly; a library returns it instead.
@@ -32,6 +37,12 @@ pub struct Program {
     evaluating: Vec<bool>,
     console: String,
     runtime_error: Option<String>,
+    /// The samples `add_sample` pushed onto each `function` node. The node holds
+    /// them, the generated `Function` reads them, and the order they arrive in is
+    /// the order the actions run in.
+    samples: BTreeMap<usize, Vec<(f64, f64)>>,
+    /// The objects the data nodes generate, one per node.
+    pub context: EngineContext,
 }
 
 impl Program {
@@ -44,6 +55,8 @@ impl Program {
             evaluating: vec![false; count],
             console: String::new(),
             runtime_error: None,
+            samples: BTreeMap::new(),
+            context: EngineContext::new(),
         }
     }
 
@@ -144,9 +157,25 @@ impl Program {
     /// `Node::_evaluate`, for the classes that have one.
     fn run(&mut self, node: usize) -> Result<(), String> {
         let data = self.graph.node(node);
-        let NodeClass::Builtin = data.class else {
-            return Ok(());
-        };
+
+        match data.class {
+            // `NodeContainer::_evaluate`: a container node run means the nodes in
+            // the container it owns run, in order, and a failure anywhere in them
+            // fails the container.
+            NodeClass::Container => {
+                for child in data.children.clone() {
+                    for node in self.graph.node(child).nodes.clone() {
+                        self.evaluate(node)?;
+                    }
+                }
+
+                return Ok(());
+            }
+
+            NodeClass::Builtin => {}
+
+            _ => return Ok(()),
+        }
 
         let Some(class) = class_name(&data.builtin_name) else {
             return Ok(());
@@ -172,10 +201,82 @@ impl Program {
                 Ok(())
             }
 
+            // `AddSampleNode::_evaluate`: read the point, then push it onto the
+            // node it references -- the function is generated later, from these.
+            "add_sample" => {
+                let x = self.number(node, "x");
+                let y = self.number(node, "y");
+
+                if let (Some(x), Some(y), Some(function)) = (x, y, self.object_source(node, "function"))
+                {
+                    self.samples.entry(function).or_default().push((x, y));
+                }
+
+                Ok(())
+            }
+
+            // `ObjectReferenceNode::_evaluate` sets its output to itself and
+            // reads its inputs into its parameter fields; the object is generated
+            // on demand. Nothing to do at run time.
+
             // `IntProbeNode` computes its input into a local and drops it, and
             // every other class computes on demand.
             _ => Ok(()),
         }
+    }
+
+    /// The node an object input references: `InputTarget::Type::Object` reads
+    /// the pointer out of an `ObjectReferenceNodeOutput`, which is the node on
+    /// the other end of the connection.
+    fn object_source(&self, node: usize, name: &str) -> Option<usize> {
+        let port = self
+            .graph
+            .node(node)
+            .inputs
+            .iter()
+            .find(|input| input.name == name)?
+            .connection?;
+
+        self.graph.port(port).owner
+    }
+
+    fn number(&self, node: usize, name: &str) -> Option<f64> {
+        let value = self.input(node, name)?;
+
+        match value {
+            Value::Float(x) => Some(x),
+            Value::Int(x) => Some(x as f64),
+            _ => None,
+        }
+    }
+
+    /// `FunctionNode::generate`: the curve this node's samples describe, built
+    /// once. `None` for a node that is not a function.
+    pub fn function(&mut self, node: usize) -> Option<&Function> {
+        if self
+            .graph
+            .node(node)
+            .builtin_name
+            .is_empty()
+        {
+            return None;
+        }
+
+        let samples = self.samples.get(&node).cloned().unwrap_or_default();
+        let filter_radius = self.number(node, "filter_radius").unwrap_or(0.0);
+
+        Some(self.context.generate_function(node, &samples, filter_radius))
+    }
+
+    /// The nodes whose class is `function`, in graph order.
+    pub fn function_nodes(&self) -> Vec<usize> {
+        self.graph
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, data)| class_name(&data.builtin_name) == Some("function"))
+            .map(|(node, _)| node)
+            .collect()
     }
 
     fn input(&self, node: usize, name: &str) -> Option<Value> {
