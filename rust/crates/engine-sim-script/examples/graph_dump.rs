@@ -176,6 +176,11 @@ fn main() {
                 objects.push((id, internal, "crankshaft"));
             }
         }
+        for internal in program.nodes_of_class("vehicle") {
+            if let Some(id) = node_ids[internal] {
+                objects.push((id, internal, "vehicle"));
+            }
+        }
         objects.sort();
 
         for (node, internal, kind) in objects {
@@ -246,6 +251,28 @@ fn main() {
                     ("crank_position_x", crankshaft.position_x),
                     ("crank_position_y", crankshaft.position_y),
                     ("crank_tdc", crankshaft.tdc),
+                ];
+
+                for (field, value) in scalars {
+                    println!("O,{},{},{:016x}", node, field, value.to_bits());
+                }
+
+                continue;
+            }
+
+            if kind == "vehicle" {
+                let vehicle = match program.context.vehicle(internal) {
+                    Some(vehicle) => *vehicle,
+                    None => continue,
+                };
+
+                let scalars = [
+                    ("vehicle_mass", vehicle.mass),
+                    ("vehicle_drag_coefficient", vehicle.drag_coefficient),
+                    ("vehicle_cross_sectional_area", vehicle.cross_sectional_area),
+                    ("vehicle_diff_ratio", vehicle.diff_ratio),
+                    ("vehicle_tire_radius", vehicle.tire_radius),
+                    ("vehicle_rolling_resistance", vehicle.rolling_resistance),
                 ];
 
                 for (field, value) in scalars {

@@ -21,7 +21,7 @@
 //! `optimize`/`markDeadNodes`, and `free`.
 
 use crate::graph::{class_name, Graph, NodeClass};
-use crate::objects::{CrankData, EngineContext, PistonData, RodData};
+use crate::objects::{CrankData, EngineContext, PistonData, RodData, VehicleData};
 use crate::values::Value;
 
 use engine_sim_core::constants::PI;
@@ -360,6 +360,25 @@ impl Program {
                         position_x: self.number(node, "position_x").unwrap_or(0.0),
                         position_y: self.number(node, "position_y").unwrap_or(0.0),
                         tdc: self.number(node, "tdc").unwrap_or(0.0),
+                    },
+                );
+
+                Ok(())
+            }
+
+            // `VehicleNode::_evaluate`: six numbers.
+            "vehicle" => {
+                self.context.set_vehicle(
+                    node,
+                    VehicleData {
+                        mass: self.number(node, "mass").unwrap_or(0.0),
+                        drag_coefficient: self.number(node, "drag_coefficient").unwrap_or(0.0),
+                        cross_sectional_area: self
+                            .number(node, "cross_sectional_area")
+                            .unwrap_or(0.0),
+                        diff_ratio: self.number(node, "diff_ratio").unwrap_or(0.0),
+                        tire_radius: self.number(node, "tire_radius").unwrap_or(0.0),
+                        rolling_resistance: self.number(node, "rolling_resistance").unwrap_or(0.0),
                     },
                 );
 
