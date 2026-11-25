@@ -1,0 +1,14 @@
+// Two instances of the same definition: the program's instance cache is keyed by
+// (structure, context), so each gets its own container and its own literal.
+node float_channel => __piranha__float {}
+node float_literal => __piranha__literal_float {
+    alias output __out [float_channel];
+}
+
+private node Identity {
+    input value [float_channel];
+    alias output result: value;
+}
+
+Identity a(value: 1.5)
+Identity b(value: 2.5)

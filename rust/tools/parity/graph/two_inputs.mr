@@ -1,0 +1,14 @@
+// Two inputs, one connected positionally and one by literal: both become
+// literals generated into the instance's own container.
+node float_channel => __piranha__float {}
+node float_literal => __piranha__literal_float {
+    alias output __out [float_channel];
+}
+
+private node Pair {
+    input left [float_channel];
+    input right [float_channel];
+    alias output result: left;
+}
+
+Pair p(1.5, right: 2.5)

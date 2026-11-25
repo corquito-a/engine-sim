@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """Records and checks the node-graph fixtures.
 
-`script_reference --graph` builds the node graph the IR generates
-(`IrCompilationUnit::build`) and dumps its structure. Those dumps are the target
-the port's `Node`/`NodeOutput`/`NodeProgram` port has to reproduce, and this
-script is what keeps them honest:
+`IrCompilationUnit::build` turns resolved IR into the `Node` graph the runtime
+executes. Two programs produce it: `script_reference --graph` (the original) and
+`graph_dump` (`crates/engine-sim-script/examples`, the port). This script keeps
+them honest:
 
-    ./run_graph.py --record      # (re)record every `graph/*.graph`
-    ./run_graph.py               # compare the reference against the recordings
+    ./run_graph.py --record      # (re)record every `graph/*.graph` from the reference
+    ./run_graph.py               # compare the port against the recordings
 
-Until the Rust graph builder exists the comparison is reference-against-recorded,
-which catches a change in the driver or in a fixture. When `graph_dump`
-(`crates/engine-sim-script/examples`) lands it becomes the second side, and the
-same recordings become a real port gate -- the format does not change.
+`--record` also checks the port against what it just recorded, so a recording
+cannot quietly bless a divergence. A divergence reported here is a difference in
+the graph -- which node was generated where, which port a connection points at,
+which container holds what -- not a formatting difference.
 
 Record layout, one record per line (see `GraphDumper` in `script_reference.cpp`):
 
@@ -40,6 +40,7 @@ FIXTURES = PARITY / "graph"
 WORK = pathlib.Path(os.environ.get("WORK", "/tmp/engine-sim-script-parity"))
 
 IR_DUMP = RUST / "target/release/examples/ir_dump"
+GRAPH_DUMP = RUST / "target/release/examples/graph_dump"
 REFERENCE = WORK / "script_reference"
 
 
@@ -47,7 +48,8 @@ def run(command, **kwargs):
     return subprocess.run(command, capture_output=True, text=True, **kwargs)
 
 
-def graph_for(fixture):
+def graph_from_reference(fixture):
+    """The original's graph: its own `build`, fed the Rust parser's IR."""
     dumped = run([str(IR_DUMP), str(fixture)])
     if dumped.returncode != 0:
         return None, dumped.stderr.strip().splitlines()[0] if dumped.stderr else "parse failed"
@@ -63,14 +65,23 @@ def graph_for(fixture):
     return reference.stdout, None
 
 
+def graph_from_port(fixture):
+    """The port's own graph, built from its own IR."""
+    port = run([str(GRAPH_DUMP), "--rules=piranha", str(fixture)])
+    if port.returncode != 0:
+        return None, port.stderr.strip().splitlines()[0] if port.stderr else "graph failed"
+
+    return port.stdout, None
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--record", action="store_true")
     parser.add_argument("fixtures", nargs="*")
     args = parser.parse_args()
 
-    if not REFERENCE.exists():
-        print(f"missing {REFERENCE}; run tools/parity/run_script_parity.sh first")
+    if not GRAPH_DUMP.exists() or (args.record and not REFERENCE.exists()):
+        print("run tools/parity/run_script_parity.sh first (it builds both sides)")
         return 2
 
     fixtures = sorted(FIXTURES.glob("*.mr"))
@@ -80,21 +91,28 @@ def main():
 
     failures = 0
     for fixture in fixtures:
-        text, error = graph_for(fixture)
+        expected_path = fixture.with_suffix(".graph")
+
+        if args.record:
+            reference, error = graph_from_reference(fixture)
+            if reference is None:
+                print(f"FAIL {fixture.name}: {error}")
+                failures += 1
+                continue
+
+            expected_path.write_text(reference)
+            print(f"recorded {expected_path.name} ({len(reference.splitlines())} records)")
+
+        expected = expected_path.read_text() if expected_path.exists() else ""
+        text, error = graph_from_port(fixture)
+
         if text is None:
             print(f"FAIL {fixture.name}: {error}")
             failures += 1
             continue
 
-        expected_path = fixture.with_suffix(".graph")
-        if args.record:
-            expected_path.write_text(text)
-            print(f"recorded {expected_path.name} ({len(text.splitlines())} records)")
-            continue
-
-        expected = expected_path.read_text() if expected_path.exists() else ""
         if text != expected:
-            print(f"FAIL {fixture.name}: graph differs from {expected_path.name}")
+            print(f"FAIL {fixture.name}: the port's graph differs from {expected_path.name}")
             for line in text.splitlines():
                 if line not in expected.splitlines():
                     print(f"    + {line}")

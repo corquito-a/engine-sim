@@ -1,0 +1,12 @@
+G,0,root,-1,3,1
+N,0,0,"1.5",__piranha__literal_float,0,0,1
+O,0,0,__out,FloatNodeType,-
+N,0,1,"2.5",__piranha__literal_float,0,0,1
+O,1,0,__out,FloatNodeType,-
+N,0,2,p,,0,2,0
+I,2,0,left,0,__out,0
+I,2,1,right,1,__out,1
+G,1,p,0,0,0
+CI,1,0,left,0,0
+CI,1,1,right,0,0
+CO,1,0,result,0,__out,0

@@ -1,0 +1,13 @@
+// A `modify` port: the container input carries the flag, which is what makes
+// `Node::connectInput` tell the channel it may be written through.
+node float_channel => __piranha__float {}
+node float_literal => __piranha__literal_float {
+    alias output __out [float_channel];
+}
+
+private node Accumulator {
+    modify total [float_channel];
+    alias output result: total;
+}
+
+Accumulator a(total: 1.5)

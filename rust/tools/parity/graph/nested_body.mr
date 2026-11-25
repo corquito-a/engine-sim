@@ -1,0 +1,19 @@
+// A body that constructs a node: the instance is generated into the enclosing
+// instance's own container, which is the only shape where a container holds
+// nodes of its own.
+node float_channel => __piranha__float {}
+node float_literal => __piranha__literal_float {
+    alias output __out [float_channel];
+}
+
+private node Identity {
+    input value [float_channel];
+    alias output result: value;
+}
+
+private node Outer {
+    input source [float_channel];
+    alias output result: Identity(source);
+}
+
+Outer o(source: 1.5)
