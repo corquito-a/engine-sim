@@ -196,7 +196,7 @@ python3 "$HERE/run_graph.py" --values || exit 1
 # And the objects the data nodes generate -- curves (`function`, `fuel`,
 # `piston`, `connecting_rod`, `crankshaft`, `vehicle`) and the structure the
 # actions build (`add_cylinder`, `set_cylinder_head`, `add_rod_journal`).
-echo "== gate OBJECTS: the curves the data nodes generate =="
+echo "== gate OBJECTS: the objects the data nodes generate =="
 objects_failures=0
 objects_scripts=0
 while IFS= read -r script; do
