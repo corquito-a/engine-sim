@@ -28,6 +28,11 @@
 #          compares what the nodes that write actually wrote, and whether the
 #          run failed.
 #
+#   ENGINE (M4 target) `tools/parity/engine/main.engine` is the engine that
+#          `assets/main.mr` configures, dumped with `--engine`. The port does not
+#          produce it yet; it is recorded so that M4 has a fixed target that is
+#          smaller than the simulation trace.
+#
 # Requires the staged reference at $REF_SCRIPT (default /tmp/refscript).
 set -euo pipefail
 
@@ -69,6 +74,20 @@ if [ "${RECORD_RESOLVED:-0}" = "1" ]; then
             > "$RUST_DIR/crates/engine-sim-script/fixtures/${name}.resolved"
         echo "  $entry -> $(wc -l < "$RUST_DIR/crates/engine-sim-script/fixtures/${name}.resolved") rows"
     done
+    exit 0
+fi
+
+# The engine header `assets/main.mr` configures, recorded from
+# `script_reference --engine`. This is M4's first target: the port has to build
+# the same engine -- the same name, counts, fuel and parameter values -- before
+# any of the simulation trace below can match.
+if [ "${RECORD_ENGINE:-0}" = "1" ]; then
+    echo "== recording the engine header =="
+    "$IR_DUMP" assets/main.mr > "$WORK/main.ir"
+    "$WORK/script_reference" --engine assets/main.mr "$WORK/main.ir" \
+        > "$HERE/engine/main.engine" 2> "$WORK/engine.err" \
+        || { echo "FAIL: the oracle could not configure the engine"; head -20 "$WORK/engine.err"; exit 1; }
+    echo "  assets/main.mr -> $(wc -l < "$HERE/engine/main.engine") lines"
     exit 0
 fi
 

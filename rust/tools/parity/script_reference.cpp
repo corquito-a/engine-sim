@@ -20,6 +20,11 @@
 //       dump its structure: containers, nodes, ports and connections. This is
 //       what the port's node generation is compared against before any of it
 //       executes.
+//   script_reference --engine <root.mr> <dump.txt>
+//       build, initialize and execute, then dump the engine the script
+//       configured (`E,...` lines) without stepping the simulation. This is
+//       what M4 -- `es_script`'s own node classes -- has to reproduce first: the
+//       header is the engine's parameters, not its behaviour.
 //   script_reference --execute <root.mr> <dump.txt>
 //       build, initialize and execute, and let the nodes that write do it: a
 //       `console_out` prints its input to stdout. A node that throws ends the
@@ -1446,7 +1451,8 @@ int main(int argc, char **argv) {
 
     if ((mode != "--run" && mode != "--check" && mode != "--resolved"
             && mode != "--errors" && mode != "--graph"
-            && mode != "--values" && mode != "--execute") || argc < 4) {
+            && mode != "--values" && mode != "--execute"
+            && mode != "--engine") || argc < 4) {
         std::fprintf(stderr, "unknown mode '%s'\n", mode.c_str());
         return 2;
     }
@@ -1623,6 +1629,25 @@ int main(int argc, char **argv) {
         root->build(&program);
         GraphDumper dumper;
         dumpGraph(&program, &dumper);
+        return 0;
+    }
+
+    if (mode == "--engine") {
+        piranha::NodeProgram program;
+        root->build(&program);
+        program.initialize();
+        if (!program.execute()) {
+            std::fprintf(stderr, "script execution failed\n");
+            return 1;
+        }
+
+        Engine *engine = es_script::Compiler::output()->engine;
+        if (engine == nullptr) {
+            std::fprintf(stderr, "the script did not create an engine\n");
+            return 1;
+        }
+
+        dumpEngine(engine);
         return 0;
     }
 
