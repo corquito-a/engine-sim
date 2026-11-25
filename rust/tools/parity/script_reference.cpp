@@ -15,6 +15,11 @@
 //   script_reference --run <root.mr> <dump.txt> [steps]
 //   script_reference --resolved <root.mr> <dump.txt>
 //   script_reference --errors <root.mr> <dump.txt>
+//   script_reference --graph <root.mr> <dump.txt>
+//       Build the node graph the IR generates (`IrCompilationUnit::build`) and
+//       dump its structure: containers, nodes, ports and connections. This is
+//       what the port's node generation is compared against before any of it
+//       executes.
 //       Rebuild the IR, run resolve/validate/build/execute exactly like
 //       `EngineSimApplication::loadScript`, then dump the resulting engine and
 //       a deterministic simulation trace.
@@ -891,6 +896,143 @@ static IrCompilationUnit *analyze(
     return resolved;
 }
 
+/// The assembled node graph, in a stable textual form.
+///
+/// `--graph` exists so the Rust port's node generation can be compared against
+/// the original's *structure* before any of it executes: containers (one per
+/// non-inline node instance), the nodes each holds in insertion order, every
+/// port with its channel type, and every input's connection. Node ids are
+/// assigned in traversal order, so they are a function of the graph and not of
+/// allocation addresses.
+///
+/// Output is one record per line, fields comma separated:
+///
+///   G,<containerId>,<name>,<parentId>,<nodeCount>,<childCount>
+///   N,<containerId>,<nodeId>,<name>,<builtinName>,<virtual>,<inputCount>,<outputCount>
+///   O,<nodeId>,<index>,<name>,<channelType>,<interfaceNodeId>
+///   I,<nodeId>,<index>,<name>,<connectionNodeId>,<connectionOutputName>,<dependencyNodeId>
+///
+/// `-` stands for a null pointer. Port order is the order the node registered
+/// them in, which is what `Node::registerInput`/`registerOutput` preserve.
+struct GraphDumper {
+    std::map<piranha::Node *, int> nodeIds;
+    std::map<piranha::NodeContainer *, int> containerIds;
+    int nextContainer = 0;
+    int nextNode = 0;
+
+    void assign(piranha::NodeContainer *container, int parentId) {
+        const int id = nextContainer++;
+        containerIds[container] = id;
+
+        for (int i = 0; i < container->getNodeCount(); ++i) {
+            nodeIds[container->getNode(i)] = nextNode++;
+        }
+
+        for (int i = 0; i < container->getChildCount(); ++i) {
+            assign(container->getChild(i), id);
+        }
+    }
+
+    static std::string idOf(const std::map<piranha::Node *, int> &ids, piranha::Node *node) {
+        if (node == nullptr) return "-";
+        auto found = ids.find(node);
+        if (found == ids.end()) return "?";
+        return std::to_string(found->second);
+    }
+
+    /// The name the owning node gave this output (`Node::NodeOutputPort::name`),
+    /// or empty when the port was registered by reference only. `NodeOutput`'s
+    /// own name is a separate field that builtin ports never set.
+    static std::string portName(piranha::Node *owner, piranha::NodeOutput *output) {
+        if (owner == nullptr || output == nullptr) return "";
+        for (int i = 0; i < owner->getOutputCount(); ++i) {
+            const piranha::Node::NodeOutputPort *port = owner->getOutput(i);
+            if (port->output == output) return port->name;
+        }
+        return "";
+    }
+
+    void dump(piranha::NodeContainer *container, int parentId) {
+        const int id = containerIds[container];
+
+        std::printf("G,%d,%s,%d,%d,%d\n", id, container->getName().c_str(), parentId,
+            container->getNodeCount(), container->getChildCount());
+
+        // The container's own ports: a node instance's inputs are the container's
+        // inputs, and its outputs are output references, so a graph the port
+        // builds has to agree on those too.
+        for (int j = 0; j < container->getInputCount(); ++j) {
+            const piranha::Node::NodeInputPort *port = container->getInput(j);
+            std::printf("CI,%d,%d,%s,%d,%d\n", id, j, port->name.c_str(),
+                port->modifiesInput ? 1 : 0, port->enableInput ? 1 : 0);
+        }
+
+        for (int j = 0; j < container->getOutputReferenceCount(); ++j) {
+            const piranha::Node::NodeOutputPortReference *reference =
+                container->getOutputReference(j);
+            piranha::NodeOutput *target =
+                (reference->output != nullptr) ? *reference->output : nullptr;
+            std::string targetNode = "-";
+            std::string targetPort = "-";
+            if (target != nullptr) {
+                piranha::Node *owner = target->getParentNode();
+                targetNode = idOf(nodeIds, owner);
+                targetPort = portName(owner, target);
+            }
+
+            std::printf("CO,%d,%d,%s,%s,%s,%s\n", id, j, reference->name.c_str(),
+                targetNode.c_str(), targetPort.c_str(),
+                idOf(nodeIds, reference->nodeOutput).c_str());
+        }
+
+        for (int i = 0; i < container->getNodeCount(); ++i) {
+            piranha::Node *node = container->getNode(i);
+
+            std::printf("N,%d,%d,%s,%s,%d,%d,%d\n", id, nodeIds[node], node->getName().c_str(),
+                node->getBuiltinName().c_str(), node->isVirtual() ? 1 : 0, node->getInputCount(),
+                node->getOutputCount());
+
+            for (int j = 0; j < node->getOutputCount(); ++j) {
+                const piranha::Node::NodeOutputPort *port = node->getOutput(j);
+                piranha::NodeOutput *output = port->output;
+                const piranha::ChannelType *type = (output != nullptr) ? output->getType() : nullptr;
+
+                std::printf("O,%d,%d,%s,%s,%s\n", nodeIds[node], j, port->name.c_str(),
+                    (type != nullptr) ? type->getType() : "-",
+                    idOf(nodeIds, (output != nullptr) ? output->getInterface() : nullptr).c_str());
+            }
+
+            for (int j = 0; j < node->getInputCount(); ++j) {
+                const piranha::Node::NodeInputPort *port = node->getInput(j);
+                piranha::NodeOutput *connection =
+                    (port->input != nullptr) ? *port->input : nullptr;
+
+                std::string connectionNode = "-";
+                std::string connectionPort = "-";
+                if (connection != nullptr) {
+                    piranha::Node *owner = connection->getParentNode();
+                    connectionNode = idOf(nodeIds, owner);
+                    connectionPort = portName(owner, connection);
+                }
+
+                std::printf("I,%d,%d,%s,%s,%s,%s\n", nodeIds[node], j, port->name.c_str(),
+                    connectionNode.c_str(), connectionPort.c_str(),
+                    idOf(nodeIds, port->dependency).c_str());
+            }
+        }
+
+        for (int i = 0; i < container->getChildCount(); ++i) {
+            dump(container->getChild(i), id);
+        }
+    }
+};
+
+static void dumpGraph(piranha::NodeProgram *program) {
+    GraphDumper dumper;
+    dumper.assign(program->getTopLevelContainer(), -1);
+    dumper.dump(program->getTopLevelContainer(), -1);
+}
+
 static void emitValue(const char *tag, const char *name, double value) {
     unsigned long long bits;
     std::memcpy(&bits, &value, sizeof(bits));
@@ -1151,6 +1293,7 @@ int main(int argc, char **argv) {
             "       script_reference --run   <root.mr> <dump.txt> [steps]\n"
             "       script_reference --resolved <root.mr> <dump.txt>\n"
             "       script_reference --errors <root.mr> <dump.txt>\n"
+            "       script_reference --graph   <root.mr> <dump.txt>\n"
             "       script_reference --builtin-ports <names.txt>\n");
         return 2;
     }
@@ -1201,7 +1344,7 @@ int main(int argc, char **argv) {
     }
 
     if ((mode != "--run" && mode != "--check" && mode != "--resolved"
-            && mode != "--errors") || argc < 4) {
+            && mode != "--errors" && mode != "--graph") || argc < 4) {
         std::fprintf(stderr, "unknown mode '%s'\n", mode.c_str());
         return 2;
     }
@@ -1370,6 +1513,13 @@ int main(int argc, char **argv) {
 
     if (mode == "--check") {
         std::printf("OK %s (%d units)\n", argv[2], (int)analyzed.size());
+        return 0;
+    }
+
+    if (mode == "--graph") {
+        piranha::NodeProgram program;
+        root->build(&program);
+        dumpGraph(&program);
         return 0;
     }
 

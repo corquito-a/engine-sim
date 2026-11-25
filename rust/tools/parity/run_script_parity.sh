@@ -16,6 +16,10 @@
 #          is the end-to-end target the Rust port has to reproduce once the
 #          node bindings land.
 #
+#   GRAPH  every script in `tools/parity/graph/` is built into a node graph by
+#          the original (`IrCompilationUnit::build`) and compared against the
+#          recorded structure. The Rust node graph is what has to reproduce it.
+#
 # Requires the staged reference at $REF_SCRIPT (default /tmp/refscript).
 set -euo pipefail
 
@@ -149,7 +153,16 @@ else
     echo "recorded rust/crates/engine-sim-script/fixtures/main_engine.trace"
 fi
 
-grep -E '^(E|0),' "$REPO_ROOT/rust/crates/engine-sim-script/fixtures/main_engine.trace" | head -8
+# The node graph the IR generates. Until the Rust `Node`/`NodeProgram` port
+# exists this compares the reference against its own recordings (`--record`
+# rewrites them); see `run_graph.py`.
+echo "== gate GRAPH: the assembled node graph of every graph fixture =="
+python3 "$HERE/run_graph.py" || exit 1
+
+# Informational: the engine header lines. `head` closes the pipe, and under
+# `pipefail` that used to end the script right here -- before the mismatch check
+# and the final `PASS` -- so the truncation is deliberate and swallowed.
+grep -E '^(E|0),' "$REPO_ROOT/rust/crates/engine-sim-script/fixtures/main_engine.trace" | head -8 || true
 
 [ "$KEEP" = "--keep" ] || rm -rf "$WORK"
 

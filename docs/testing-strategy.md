@@ -1028,3 +1028,66 @@ against a string port in a fixture that declared only `literal_int`, so the
 string literal had no definition and now reports `R0010` -- which is what the
 reference reports for it. The fixture gained a `literal_string` definition, and
 the test now reports only the type errors it is about.
+
+## The node graph
+
+Every gate so far stops at `resolveAll`. The phase after it is `build`:
+`IrCompilationUnit::build` creates a root `IrContextTree`, walks the unit's node
+list and calls `generateNode` on each, which is what turns the resolved IR into
+`Node` objects wired together by `NodeOutput` pointers. That graph is what the
+engine's bindings then execute, and it had no oracle.
+
+`script_reference --graph <root.mr> <dump>` is that oracle. It runs the same
+injection and `resolve`/`validate` stages as the other modes, then calls
+`root->build(&program)` and dumps the result:
+
+| record | fields |
+|---|---|
+| `G` | container id, name, parent id, node count, child count |
+| `CI` | container input: container id, index, name, modifies, enable |
+| `CO` | container output reference: container id, index, name, target node, target port, node output |
+| `N` | node: container id, node id, name, builtin name, virtual, input count, output count |
+| `O` | output port: node id, index, name, channel type, interface node |
+| `I` | input port: node id, index, name, connection node, connection port, dependency node |
+
+`-` is a null pointer. Node ids are assigned in traversal order — a container's
+own nodes in insertion order, then its children depth first — so they describe
+the graph rather than the allocator.
+
+`tools/parity/run_graph.py` records (`--record`) and checks the fixtures in
+`tools/parity/graph/`. The fixtures are deliberately tiny, one idea each:
+
+| fixture | what it pins |
+|---|---|
+| `literal_float.mr` | one builtin literal node, its name (`"1.5"`-style quoted text is the node's *name*), its `__out` port and its channel type |
+| `node_identity.mr` | an instance with an input bound to a literal: where the literal's node lands, how the container's input and output reference are wired |
+| `literal_in_container.mr` | a literal that belongs to the instance's own container instead of the root |
+
+Three things the graphs say that the code does not:
+
+* **Interface nodes are a vector-only affair.** `NodeOutput::newInterface`
+  returns `nullptr` for every output class except `VectorOutput`, so
+  `IrAttributeDefinition::_generateNode`'s "this must be an interface" branch
+  produces nothing for scalars, and `getInterface()` is `-` in the `O` records.
+  A port that reads that as "the node is missing" will go looking for a bug that
+  is not there.
+* **`addNode` is not "push onto this container".** `NodeContainer::addNode`
+  starts with `if (getTopLevel()->findNode(node)) return;`, and a node generated
+  for an instance's input is added to the *root* container. In `node_identity`
+  the container `d` therefore holds no nodes at all while root holds both the
+  literal and `d` itself.
+* **A container's outputs are not its outputs.** They are
+  `m_outputReferences` (`CO`), registered by `addContainerOutput` through a
+  `pNodeInput` connection point; `m_outputs` stays empty.
+
+Graph fixtures have to be clean: `build` dereferences the resolved definition, so
+a script with errors has no graph to dump. That is why these three are the
+simplest shapes that still exercise a container — a binary operator over two
+ports of a user definition still reports two unspecified-token `R0010`s in the
+reference and cannot be used as a graph fixture until that resolves.
+
+**Status.** `run_graph.py` currently compares the reference against the
+recordings, which catches driver and fixture drift. `crates/engine-sim-script`
+has no `Node`/`NodeOutput`/`NodeProgram` yet; when `graph_dump` lands, it becomes
+the other side of the same comparison and the recordings become the port gate,
+with no change to the format.

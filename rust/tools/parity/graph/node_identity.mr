@@ -1,0 +1,14 @@
+// A user definition with one input and one alias output: the port's value is
+// the input, so the container holds no nodes of its own and its output is a
+// reference to the node the input generated.
+node float_channel => __piranha__float {}
+node float_literal => __piranha__literal_float {
+    alias output __out [float_channel];
+}
+
+private node Identity {
+    input value [float_channel];
+    alias output result: value;
+}
+
+Identity d(value: 1.5)

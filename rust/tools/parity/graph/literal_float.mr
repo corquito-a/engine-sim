@@ -1,0 +1,11 @@
+// The smallest graph there is: one builtin literal node at top level.
+//
+// `IrCompilationUnit::build` walks the unit's node list; this unit has one
+// instance of a definition that maps straight onto piranha's own literal node,
+// so the graph is a single node with a single `__out` port.
+node float_channel => __piranha__float {}
+node float_literal => __piranha__literal_float {
+    alias output __out [float_channel];
+}
+
+float_literal a()
