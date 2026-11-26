@@ -21,6 +21,73 @@ use std::collections::BTreeMap;
 
 /// `es_script::EngineContext`, restricted to what has been ported: one cache per
 /// object type, keyed by the node that generates it.
+/// `ApplicationSettings`: what `set_application_settings` writes, and the only
+/// script state that is not an object graph. The defaults are the header's.
+#[derive(Clone, Debug)]
+pub struct ApplicationSettings {
+    pub start_fullscreen: bool,
+    pub power_units: String,
+    pub torque_units: String,
+    pub speed_units: String,
+    pub pressure_units: String,
+    pub boost_units: String,
+    pub color_background: i32,
+    pub color_foreground: i32,
+    pub color_shadow: i32,
+    pub color_highlight1: i32,
+    pub color_highlight2: i32,
+    pub color_pink: i32,
+    pub color_red: i32,
+    pub color_orange: i32,
+    pub color_yellow: i32,
+    pub color_blue: i32,
+    pub color_green: i32,
+}
+
+impl ApplicationSettings {
+    /// The field `set_application_settings` names, by input name.
+    pub fn set_color(&mut self, name: &str, value: i32) {
+        match name {
+            "color_background" => self.color_background = value,
+            "color_foreground" => self.color_foreground = value,
+            "color_shadow" => self.color_shadow = value,
+            "color_highlight1" => self.color_highlight1 = value,
+            "color_highlight2" => self.color_highlight2 = value,
+            "color_pink" => self.color_pink = value,
+            "color_red" => self.color_red = value,
+            "color_orange" => self.color_orange = value,
+            "color_yellow" => self.color_yellow = value,
+            "color_blue" => self.color_blue = value,
+            "color_green" => self.color_green = value,
+            _ => {}
+        }
+    }
+}
+
+impl Default for ApplicationSettings {
+    fn default() -> Self {
+        Self {
+            start_fullscreen: false,
+            power_units: "hp".to_string(),
+            torque_units: "lb-ft".to_string(),
+            speed_units: "mph".to_string(),
+            pressure_units: "inHg".to_string(),
+            boost_units: "psi".to_string(),
+            color_background: 0x0E1012,
+            color_foreground: 0xFFFFFF,
+            color_shadow: 0x0E1012,
+            color_highlight1: 0xEF4545,
+            color_highlight2: 0xFFFFFF,
+            color_pink: 0xF394BE,
+            color_red: 0xEE4445,
+            color_orange: 0xF4802A,
+            color_yellow: 0xFDBD2E,
+            color_blue: 0x77CEE0,
+            color_green: 0xBDD869,
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct EngineContext {
     functions: BTreeMap<usize, Function>,

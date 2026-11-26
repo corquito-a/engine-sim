@@ -28,8 +28,9 @@
 #          compares what the nodes that write actually wrote, and whether the
 #          run failed.
 #
-#   OBJECTS `--objects` on every script in `assets/`: the curves the data nodes
-#          generate, byte for byte. This is the first gate that reaches M4.
+#   OBJECTS `--objects` and `--settings` on every script in `assets/`: the objects
+#          the data nodes generate and the application settings the script
+#          writes, byte for byte. This is the gate that reaches M4.
 #
 #   ENGINE (M4 target) `tools/parity/engine/main.engine` is the engine that
 #          `assets/main.mr` configures, dumped with `--engine`. The port does not
@@ -196,7 +197,7 @@ python3 "$HERE/run_graph.py" --values || exit 1
 # And the objects the data nodes generate -- curves (`function`, `fuel`,
 # `piston`, `connecting_rod`, `crankshaft`, `vehicle`) and the structure the
 # actions build (`add_cylinder`, `set_cylinder_head`, `add_rod_journal`).
-echo "== gate OBJECTS: the objects the data nodes generate =="
+echo "== gate OBJECTS and SETTINGS: the objects and settings a script makes =="
 objects_failures=0
 objects_scripts=0
 while IFS= read -r script; do
@@ -213,13 +214,25 @@ while IFS= read -r script; do
         diff "$WORK/objects.ref" "$WORK/objects.port" | head -10
         objects_failures=$((objects_failures + 1))
     fi
+
+    # The application settings are the one piece of script state no object holds.
+    "$WORK/script_reference" --settings "$script" "$WORK/objects.ir" > "$WORK/settings.ref" 2>/dev/null \
+        || { echo "FAIL: the reference could not run $script (settings)"; exit 1; }
+
+    "$GRAPH_DUMP" --settings "$script" > "$WORK/settings.port" 2>/dev/null
+
+    if ! diff -q "$WORK/settings.ref" "$WORK/settings.port" > /dev/null; then
+        echo "FAIL: $script writes different settings"
+        diff "$WORK/settings.ref" "$WORK/settings.port" | head -10
+        objects_failures=$((objects_failures + 1))
+    fi
 done < <(find assets -name '*.mr' | sort)
 
 if [ "$objects_failures" -ne 0 ]; then
     echo "FAIL: $objects_failures of $objects_scripts scripts differ"
     exit 1
 fi
-echo "-- $objects_scripts scripts, every generated object identical"
+echo "-- $objects_scripts scripts, every generated object and every settings line identical"
 
 # And above that: what a run writes, and whether it fails where the original
 # fails.

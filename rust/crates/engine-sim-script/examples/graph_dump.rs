@@ -14,7 +14,8 @@
 //! `fullCompute`. `--execute` runs the graph the way `NodeProgram` does and
 //! prints whatever its side-effecting nodes wrote. `--objects` runs it and then
 //! prints the objects the data nodes generate -- the curves `function` nodes
-//! build out of the samples `add_sample` pushed onto them.
+//! build out of the samples `add_sample` pushed onto them. `--settings` prints
+//! the application settings the script wrote, which no object holds.
 //!
 //! The phases are `resolveAll`'s, in order, because the graph is built from what
 //! resolution decided: definitions, circularity, expansion, then `build`.
@@ -79,6 +80,7 @@ fn main() {
     let mut values = false;
     let mut execute = false;
     let mut objects = false;
+    let mut settings = false;
     let mut arguments = std::env::args().skip(1);
 
     let entry = loop {
@@ -88,9 +90,10 @@ fn main() {
             Some(argument) if argument == "--values" => values = true,
             Some(argument) if argument == "--execute" => execute = true,
             Some(argument) if argument == "--objects" => objects = true,
+            Some(argument) if argument == "--settings" => settings = true,
             Some(argument) => break argument,
             None => {
-                eprintln!("usage: graph_dump [--values|--execute|--objects] [--rules=piranha|engine-sim] <root.mr> [search-path...]");
+                eprintln!("usage: graph_dump [--values|--execute|--objects|--settings] [--rules=piranha|engine-sim] <root.mr> [search-path...]");
                 std::process::exit(2);
             }
         }
@@ -132,6 +135,40 @@ fn main() {
         if let Err(message) = result {
             eprintln!("runtime error: {}", message);
             std::process::exit(1);
+        }
+
+        return;
+    }
+
+    if settings {
+        let mut program = engine_sim_script::program::Program::new(graph);
+        if let Err(message) = program.execute() {
+            eprintln!("runtime error: {}", message);
+            std::process::exit(1);
+        }
+
+        let settings = &program.settings;
+        println!("S,start_fullscreen,{}", settings.start_fullscreen as i32);
+        println!("S,power_units,{}", settings.power_units);
+        println!("S,torque_units,{}", settings.torque_units);
+        println!("S,speed_units,{}", settings.speed_units);
+        println!("S,pressure_units,{}", settings.pressure_units);
+        println!("S,boost_units,{}", settings.boost_units);
+
+        for (name, value) in [
+            ("color_background", settings.color_background),
+            ("color_foreground", settings.color_foreground),
+            ("color_shadow", settings.color_shadow),
+            ("color_highlight1", settings.color_highlight1),
+            ("color_highlight2", settings.color_highlight2),
+            ("color_pink", settings.color_pink),
+            ("color_red", settings.color_red),
+            ("color_orange", settings.color_orange),
+            ("color_yellow", settings.color_yellow),
+            ("color_blue", settings.color_blue),
+            ("color_green", settings.color_green),
+        ] {
+            println!("S,{},{}", name, value);
         }
 
         return;

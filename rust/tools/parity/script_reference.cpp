@@ -20,6 +20,9 @@
 //       dump its structure: containers, nodes, ports and connections. This is
 //       what the port's node generation is compared against before any of it
 //       executes.
+//   script_reference --settings <root.mr> <dump.txt>
+//       build, initialize and execute, then dump the application settings the
+//       script wrote (`S,...` lines).
 //   script_reference --objects <root.mr> <dump.txt>
 //       build, initialize, execute, then generate and dump the objects the data
 //       nodes produce (`O,...` lines) -- the first of M4's classes, `function`.
@@ -1685,7 +1688,8 @@ int main(int argc, char **argv) {
     if ((mode != "--run" && mode != "--check" && mode != "--resolved"
             && mode != "--errors" && mode != "--graph"
             && mode != "--values" && mode != "--execute"
-            && mode != "--engine" && mode != "--objects") || argc < 4) {
+            && mode != "--engine" && mode != "--objects"
+            && mode != "--settings") || argc < 4) {
         std::fprintf(stderr, "unknown mode '%s'\n", mode.c_str());
         return 2;
     }
@@ -1862,6 +1866,36 @@ int main(int argc, char **argv) {
         root->build(&program);
         GraphDumper dumper;
         dumpGraph(&program, &dumper);
+        return 0;
+    }
+
+    if (mode == "--settings") {
+        piranha::NodeProgram program;
+        root->build(&program);
+        program.initialize();
+        if (!program.execute()) {
+            std::fprintf(stderr, "script execution failed\n");
+            return 1;
+        }
+
+        const ApplicationSettings &settings = es_script::Compiler::output()->applicationSettings;
+        std::printf("S,start_fullscreen,%d\n", settings.startFullscreen ? 1 : 0);
+        std::printf("S,power_units,%s\n", settings.powerUnits.c_str());
+        std::printf("S,torque_units,%s\n", settings.torqueUnits.c_str());
+        std::printf("S,speed_units,%s\n", settings.speedUnits.c_str());
+        std::printf("S,pressure_units,%s\n", settings.pressureUnits.c_str());
+        std::printf("S,boost_units,%s\n", settings.boostUnits.c_str());
+        std::printf("S,color_background,%d\n", settings.colorBackground);
+        std::printf("S,color_foreground,%d\n", settings.colorForeground);
+        std::printf("S,color_shadow,%d\n", settings.colorShadow);
+        std::printf("S,color_highlight1,%d\n", settings.colorHighlight1);
+        std::printf("S,color_highlight2,%d\n", settings.colorHighlight2);
+        std::printf("S,color_pink,%d\n", settings.colorPink);
+        std::printf("S,color_red,%d\n", settings.colorRed);
+        std::printf("S,color_orange,%d\n", settings.colorOrange);
+        std::printf("S,color_yellow,%d\n", settings.colorYellow);
+        std::printf("S,color_blue,%d\n", settings.colorBlue);
+        std::printf("S,color_green,%d\n", settings.colorGreen);
         return 0;
     }
 
