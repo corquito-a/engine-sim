@@ -1281,6 +1281,14 @@ put a group's side effects after the top level instead of in place. The fixture
 `before after (group)` — and with the rule fixed the second pass, and the
 reversal, both disappeared.
 
+`set_application_settings` is the one action whose state no object holds: it
+replaces `Compiler::output()->applicationSettings` wholesale, so an unconnected
+input keeps the header's default rather than the node's. `--settings` dumps the
+six strings/flag and eleven colours, the reference from the compiler output and
+the port from its own `ApplicationSettings`, and both are compared over the same
+40 scripts. `tests/settings_tests.rs` pins the defaults, which is the half a
+script cannot show — no script sets every field.
+
 Two things the gate caught earlier, neither visible from the graph alone: two of
 those curves are not made of `add_sample` at all:
 `generate_harmonic_cam_lobe` *writes* its samples and overrides the node's filter
@@ -1305,6 +1313,7 @@ records), byte for byte, and computes the same value on every port of all of
 them. `run_graph.py` and `tests/graph_tests.rs` enforce the graph,
 `run_graph.py --values` and `tests/value_tests.rs` the values,
 `run_graph.py --execute` and `tests/program_tests.rs` the runs, and
-`run_script_parity.sh` runs them as its `GRAPH`, `VALUES` and `EXECUTE` gates.
-What is *not* ported yet is the state behind the graph: the `es_script`
-channels and nodes (M4), which is what turns a run into a simulation.
+`run_script_parity.sh` runs them as its `GRAPH`, `VALUES`, `OBJECTS`,
+`SETTINGS` and `EXECUTE` gates. What is *not* ported yet is the rest of the
+`es_script` classes (M4) — the part graph behind `engine`, which is what turns a
+run into a simulation.

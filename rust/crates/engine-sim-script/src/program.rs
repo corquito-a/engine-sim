@@ -22,7 +22,8 @@
 
 use crate::graph::{class_name, Graph, NodeClass};
 use crate::objects::{
-    CrankData, CylinderRefs, EngineContext, PistonData, RodData, RodJournalData, VehicleData,
+    ApplicationSettings, CrankData, CylinderRefs, EngineContext, PistonData, RodData,
+    RodJournalData, VehicleData,
 };
 use crate::values::Value;
 
@@ -52,6 +53,8 @@ pub struct Program {
     filter_radius: BTreeMap<usize, f64>,
     /// The objects the data nodes generate, one per node.
     pub context: EngineContext,
+    /// `Compiler::output()->applicationSettings`, written by the settings action.
+    pub settings: ApplicationSettings,
 }
 
 impl Program {
@@ -67,6 +70,7 @@ impl Program {
             samples: BTreeMap::new(),
             filter_radius: BTreeMap::new(),
             context: EngineContext::new(),
+            settings: ApplicationSettings::default(),
         }
     }
 
@@ -415,6 +419,61 @@ impl Program {
                 Ok(())
             }
 
+            // `SetApplicationSettingsNode::_evaluate`: `readAllInputs` then the
+            // whole struct replaces the output's, so an unconnected input keeps
+            // the header's default.
+            "set_application_settings" => {
+                let mut settings = ApplicationSettings::default();
+
+                if let Some(value) = self.text(node, "power_units") {
+                    settings.power_units = value;
+                }
+                if let Some(value) = self.text(node, "torque_units") {
+                    settings.torque_units = value;
+                }
+                if let Some(value) = self.text(node, "speed_units") {
+                    settings.speed_units = value;
+                }
+                if let Some(value) = self.text(node, "pressure_units") {
+                    settings.pressure_units = value;
+                }
+                if let Some(value) = self.text(node, "boost_units") {
+                    settings.boost_units = value;
+                }
+
+                settings.start_fullscreen = matches!(
+                    self.input(node, "start_fullscreen"),
+                    Some(Value::Bool(true))
+                );
+
+                let colors = [
+                    ("color_background", 0x0E1012),
+                    ("color_foreground", 0xFFFFFF),
+                    ("color_shadow", 0x0E1012),
+                    ("color_highlight1", 0xEF4545),
+                    ("color_highlight2", 0xFFFFFF),
+                    ("color_pink", 0xF394BE),
+                    ("color_red", 0xEE4445),
+                    ("color_orange", 0xF4802A),
+                    ("color_yellow", 0xFDBD2E),
+                    ("color_blue", 0x77CEE0),
+                    ("color_green", 0xBDD869),
+                ];
+
+                for (name, default) in colors {
+                    if let Some(value) = self.int(node, name) {
+                        settings.set_color(name, value);
+                    }
+                    else {
+                        settings.set_color(name, default);
+                    }
+                }
+
+                self.settings = settings;
+
+                Ok(())
+            }
+
             // `ObjectReferenceNode::_evaluate` sets its output to itself and
             // reads its inputs into its parameter fields; the object is generated
             // on demand. Nothing to do at run time.
@@ -449,6 +508,20 @@ impl Program {
         }
 
         Some(owner)
+    }
+
+    fn text(&self, node: usize, name: &str) -> Option<String> {
+        match self.input(node, name)? {
+            Value::Text(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    fn int(&self, node: usize, name: &str) -> Option<i32> {
+        match self.input(node, name)? {
+            Value::Int(value) => Some(value),
+            _ => None,
+        }
     }
 
     fn number(&self, node: usize, name: &str) -> Option<f64> {
