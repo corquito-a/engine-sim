@@ -1,0 +1,27 @@
+// `console_in` is the one node whose value is not a function of its inputs: its
+// `_evaluate` writes the prompt, reads one whitespace-delimited word from
+// standard input, and puts it in `raw_input`. So this fixture needs a `reads.stdin`
+// beside it -- the gate feeds both sides the same bytes -- and what it pins is
+//  * the prompt reaching the output at the point the node runs,
+//  * the word the node took being the one its consumers see, and
+//  * two instances reading successive words rather than both reading the first.
+node string_channel => __piranha__string {}
+node string_literal => __piranha__literal_string {
+    alias output __out [string_channel];
+}
+node string_add => __piranha__string_add {
+    input __in0 [string_channel];
+    input __in1 [string_channel];
+    alias output __out [string_channel];
+}
+node console_out => __piranha__console_out {
+    input data [string_channel];
+}
+node console_in => __piranha__console_in {
+    input prompt [string_channel];
+    alias output raw_input [string_channel];
+}
+
+console_out greeting(data: "name: ")
+console_out shout(data: console_in(prompt: "> ") + "!")
+console_out outro(data: " and " + console_in(prompt: "? "))

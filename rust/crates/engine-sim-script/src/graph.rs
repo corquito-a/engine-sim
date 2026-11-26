@@ -34,6 +34,9 @@ use crate::ir::{BinOp, Direction};
 use crate::language_rules::LiteralKind;
 use crate::lower::{Arena, Kind, Literal, StructureId};
 use crate::reference::{ReferenceQuery, ReferenceState};
+use crate::values::Value;
+
+use std::collections::BTreeMap;
 
 pub type NodeId = usize;
 pub type PortId = usize;
@@ -172,6 +175,10 @@ pub struct Graph {
     /// Set when generation hit [`Arena::build_depth`]'s limit: the reference
     /// recurses until its stack runs out, so there is no graph to compare.
     pub recursion_exhausted: bool,
+    /// What a node's `_evaluate` wrote into its own output, by node. `fullCompute`
+    /// reads an output's *data*, so a node whose value is not a function of its
+    /// inputs -- `console_in`, which reads standard input -- is only visible here.
+    pub outputs: BTreeMap<NodeId, Value>,
 }
 
 impl Graph {

@@ -196,6 +196,13 @@ impl Graph {
     }
 
     fn node_value(&self, node: usize, depth: usize) -> Option<Value> {
+        // What the node's `_evaluate` wrote into its own output, if anything has
+        // run: `fullCompute` reads an output's data, and `console_in`'s data comes
+        // from standard input rather than from the graph.
+        if let Some(value) = self.outputs.get(&node) {
+            return Some(value.clone());
+        }
+
         let data = self.node(node);
 
         match data.class {
