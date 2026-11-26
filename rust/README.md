@@ -35,7 +35,7 @@ Motivation and estimates: [`docs/rust-port-assessment.md`](../docs/rust-port-ass
 | `script` references / expansion / type checks / node graph | `piranha/src/ir_*.cpp`, `node_graph.cpp` | ✅ done | `GRAPH`, `VALUES`, `EXECUTE`, `OPTIMIZE` gates |
 | `scripting/` bindings (`EngineContext` → `Engine`, vehicle, transmission) | `scripting/` | ✅ done | `RUN`, `DRIVEN`, `DRIVE` gates, 16 265 + 3 × ~800 000 checkpoints |
 | `engine-sim-cli` (a script run without the application) | `EngineSimApplication`'s frame loop | ✅ done | the same drive as `DRIVEN`, 7 tests |
-| breadth and performance (every engine driven; real time) | `EngineSimApplication` | ◐ done for the headless half | `RUNNING` (20 engines), `measure_performance.sh` (1.30x real time) |
+| breadth and performance (every engine driven; real time) | `EngineSimApplication` | ◐ done for the headless half | `RUNNING` (20 engines, half a second of engine time each), `measure_performance.sh` (1.30x real time) |
 | app shell (window/render/UI/audio out) | `delta-studio` | ⬜ | — |
 
 **Verification result: the whole simulation core and the audio path are

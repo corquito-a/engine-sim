@@ -198,7 +198,7 @@ Each milestone is independently verifiable, and M0 is what unblocks everything.
 | M4 | ✅ | **the engine, built from the script and simulated by the port**. `build.rs` is `EngineNode::buildEngine` and every `generate` under it: the counts, the fuel, the mean-piston-speed curve, the crankshafts and their rod-journal indices, the banks with their pistons and rods (a slave rod taking its master's crankshaft), the heads with their camshafts, lobe centrelines and port-flow curves, the intakes, the exhausts, the ignition module's posts resolved through the bank cylinder indices, and the chambers. `trace.rs` + `examples/script_trace.rs` put that engine in the application's default vehicle and transmission and emit `traceFrames`' 33 fields per frame, so the `RUN` gate is now two-sided: `script_reference --run` against the recorded fixture, and the port's own engine against the reference -- **all 16 263 lines identical**, physics, gas dynamics, synthesizer input and rendered audio. `graph_dump --engine` covers the parameters on their own (98 lines), `tests/run_tests.rs` the same trace without a C++ build, and `tests/engine_tests.rs` the wiring of every engine input. The drivetrain was the last M4 gap and is now closed (§8.5): `build::simulator` builds the script's own `vehicle` and `transmission` through `objects.rs`'s `TransmissionData`, `add_gear`, `set_vehicle`/`set_transmission`, falling back **per object** to the application's pair exactly as `EngineSimApplication::loadScript` does. **M5 is done**: see the row below. **Widened past `main.mr`:** `tools/parity/engines/` holds one wrapper per engine asset that builds one -- 20 of them, from a Honda TRX520 single and a five-cylinder Audi to a Merlin V12 and a nine-cylinder radial -- each imported and `main()`ed so the same `--run` trace can be taken, and all 20 are byte-identical to the original (`PASS: 20 engines`, 15 339–21 672 lines each). What they found that one engine could not: an **exhaust index** that `build.rs` never stamped, so every exhaust wrote into staging slot 0 (2 461 differing lines on the 2JZ); `__engine_sim__add_slave_journal` registered as a class but unported, so a radial's slave journals never told their rod's master, and every rod rode a journal with no crankshaft; and the `std::set` of pointers behind the intake/exhaust order, which is allocation order -- node-id order -- and only shows itself on an engine with **two** exhaust systems of different lengths (the LFA V10, the Merlin, the 412 T2) |
 | M5 | ✅ | **the audio the script asks for**. `objects.rs`'s `ImpulseResponseData` is `ImpulseResponseNode::generate`: the filename resolved against the directory of the *unit that wrote the node* (`paths.rs` is `parent_path() / filename`, one of the two path rules a script can reach) and the volume the node asked for. `wav.rs` is `ysWindowsAudioWaveFile` without `mmio` -- walk the chunks, take `blockAlign / channels * 8` for the bit depth and `dataSize / blockAlign` for the frame count, and hand the synthesizer the first `frames` little-endian `int16`s, which is exactly what `EngineSimApplication::loadScript` passes it. `build` now returns `BuiltEngine` (the engine plus one response per exhaust) and `simulator` installs each file at its own volume, falling back to the deterministic table only for an exhaust that names none -- so the `RUN` gate's audio is a convolution over the real samples: **16 265 lines identical**, and the 1 376 `audio*` values the synthetic table used to produce all move. Three gates: the header's two new lines per exhaust (`exhaust<i>_impulse_response` and `..._volume`, 98 lines now), the `OBJECTS` gate's `impulse_response_filename`/`_volume` records for all ten library nodes, and `WAVE` -- `script_reference --wave` against `examples/wave_dump` on all **10 wave files**, channels, rate, bits, frames and an FNV-1a hash over every sample identical. The filename a dump prints is the repository-relative form, because the object holds the absolute one (the units are absolute) and a fixture that pinned a checkout directory would be worth nothing |
 | M6 | ✅ | **the application without the window**. `crates/engine-sim-cli` parses a command line, resolves and executes the script through the port's own front end (`resolve::program` is that whole pipeline in one call: load, lower, rules, imports, definitions, circularity, expansion, `Program::new`), builds the simulator, and then runs `EngineSimApplication`'s frame loop -- `start_frame`, `simulate_step` until it returns false, `end_frame`, `render_audio_block`, `read_audio_output` -- until it has produced the requested seconds *of audio*, because a frame is not exactly `1/fps` of engine time (the latency controller scales it by 1.1/0.9, so a fixed frame count runs 2.20 s for every 2 s asked). Output is a 44.1 kHz 16-bit mono wave file and one CSV row per frame (`frame,time_s,rpm,vehicle_kmh,crank_rad_s,throttle,dyno_torque_nm,dyno_power_w,exhaust_pa,chamber0_pa,audio_samples`), plus a summary. `--gear`/`--shift`/`--clutch` are the driver's controls (§8.5). Three behaviours are the application's, not the engine's, and the CLI has to reproduce them: the audio is always rendered, because the synthesizer shares its random sequence with combustion; the starter is released after `--starter` seconds, because its velocity constraint otherwise holds the crank at the starter's speed forever; and the ignition is switched on, because `IgnitionModule` is built disabled and nothing but the `A` key ever enables it. `--no-starter`/`--no-ignition` reach the old behaviour. The gate is `DRIVEN` (see below) plus `tests/cli_tests.rs`: 7 integration tests over the binary's contract (usage, `--help`, unknown option, throttles and gears out of range, the wave file's header and length, the CSV's shape) and one that pins the ignition default by requiring the engine to idle after the starter lets go, and to stop without it |
-| M7 | ◐ | **breadth and performance**, M6's engine in the application's own terms. *Breadth*: `RUNNING` puts all 20 engine assets on the road instead of the one `main.mr` and the three `DRIVE` drives -- 8 000 frames each, ignition on, wide open, free-revving -- and they are identical checkpoint for checkpoint (305 699 to 429 338 lines each); 11 of them fire inside that window and 9 do not, which the gate reports rather than requires, because a starter that cannot turn a Merlin in 0.3 s is a fact about the engine, not a divergence. *Performance*: `tools/parity/measure_performance.sh` asks both sides how fast they render, using the loop's clock rather than the process's (§8.7) -- the port renders **1.30 x real time** against the original's 1.13 x, every asset above 1.0 x, and the slowest (the nine-cylinder radial) at 1.02 x. Two changes bought that: the two-channel convolution runs as one pass (`ConvolutionFilter::f_pair`, bit-identical by construction) and `write_to_synthesizer` stopped cloning the cylinder head per cylinder per step. **Next**: the app shell (window, render, UI), the only unported part left |
+| M7 | ◐ | **breadth and performance**, M6's engine in the application's own terms. *Breadth*: `RUNNING` puts all 20 engine assets on the road instead of the one `main.mr` and the three `DRIVE` drives -- half a second of *engine* time each, ignition on, wide open, free-revving -- and they are identical checkpoint for checkpoint (134 318 to 764 159 lines each). 13 of them catch inside that window and 7 do not; the count is reported rather than required, because it is a fact about cranking, not a divergence (§8.8). *Performance*: `tools/parity/measure_performance.sh` asks both sides how fast they render, using the loop's clock rather than the process's (§8.7) -- the port renders **1.30 x real time** against the original's 1.13 x, every asset above 1.0 x, and the slowest (the nine-cylinder radial) at 1.02 x. Two changes bought that: the two-channel convolution runs as one pass (`ConvolutionFilter::f_pair`, bit-identical by construction) and `write_to_synthesizer` stopped cloning the cylinder head per cylinder per step. **Next**: the app shell (window, render, UI), the only unported part left |
 
 Two deviations from the plan, both forced by the missing toolchain:
 
@@ -539,3 +539,52 @@ visible in an application that opens a script on a click; the radial's 4.0 s is
 the script->engine build itself (`es/engine_sim.mr` plus nine cylinders of
 valvetrain functions), the original spends 5.4 s on the same work, and neither
 number is something this gate can improve.
+
+### 8.8 Why seven engines don't catch, and what the gate was really asking
+
+`RUNNING`'s first version ran "8 000 frames" of every engine and reported that 11
+of 20 caught. The number 8 000 was a mistake worth keeping: a frame in the trace
+harness is **one simulation step** (`startFrame(timestep * 0.1)`), so 8 000 frames
+is 8 000 `timestep`s, and `timestep` is `1 / simulation_frequency` — a property
+the *script* sets, from 5 kHz to 40 kHz in this corpus. The gate was therefore
+asking the fast engines a much smaller question:
+
+| engine | simulation frequency | 8 000 frames |
+|---|---|---|
+| Honda TRX520 | 40 kHz | 0.20 s |
+| Kohler CH750 | 30 kHz | 0.27 s |
+| Ferrari 412 T2 | 5 kHz | 1.60 s |
+
+Two different reasons hid behind "does not fire", and neither was an engine that
+cannot run.
+
+**Too little engine time to fill the intake.** The three fastest engines never
+even released the starter inside the window (0.3 s of engine time is frame 9 000
+to 12 000 of 8 000). They spent the whole run cranking through 1.7-2.4
+revolutions — less than one four-stroke cycle from a cold intake. The evidence is
+the chamber's own mixture: a peak of 0.003-0.004 units of fuel against 0.024 in
+every engine that fires. Four times the window and they all catch, on the same
+0.3 s starter (1 020, 694 and 3 516 lit frames).
+
+**The starter released before the charge arrived.** The other six (Audi I5, 2JZ,
+60° V6, F136 V8, radial 9, Merlin V12) run at 7-17 kHz, so they did release the
+starter — at 26-64% of the window — and then stalled at cranking speed within a
+few compression strokes and never recovered, however long the run continued
+(12.8 s tested, still nothing). Hold the starter instead and every one of them
+catches and runs away: Audi I5 6 526 rpm, 2JZ 6 563, 60° V6 5 648, F136 9 319,
+radial 9 3 468, Merlin 3 517 -- the Merlin only after about 8 s of cranking
+(nothing at 6.4 s, 1 784 lit frames at 8.6 s), because a 27-litre V12 on a starter
+geared for 200 rpm is being turned at 29 rpm: compression, not the motor, decides.
+
+So **all 20 run**, given the cranking time a driver would give them, and the
+original does exactly the same thing in exactly the same runs — every one of these
+comparisons is bit-identical. The gate now gives every engine half a second of
+engine time (`frames = simulation_frequency / 2`, the same total cost, since the
+average engine is ~16 kHz) so that the run means one thing, and reports the count
+of engines that catch inside it: 13, with the reason the other seven do not in
+the line below it.
+
+The general lesson is the one the performance instrument taught in §8.7: a
+quantity that *looks* like a duration but is counted in steps will silently mean
+different things on different engines, and the giveaway is a spread of results
+where the mechanism should be the same.
