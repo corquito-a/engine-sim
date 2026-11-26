@@ -166,6 +166,7 @@ pub struct EngineContext {
     camshafts: BTreeMap<usize, CamshaftData>,
     valvetrains: BTreeMap<usize, ValvetrainData>,
     throttles: BTreeMap<usize, ThrottleData>,
+    impulse_responses: BTreeMap<usize, ImpulseResponseData>,
 
     /// `IgnitionWireNode::m_connections`: the `(bank, local index)` pairs
     /// `add_cylinder` hangs on a wire, in order.
@@ -231,6 +232,29 @@ pub struct IntakeData {
     pub idle_throttle_plate_position: f64,
     pub runner_length: f64,
     pub velocity_decay: f64,
+}
+
+/// `ImpulseResponseNode`'s `ImpulseResponse`: the file an exhaust's convolution
+/// runs on and the volume it is scaled by.
+///
+/// `generate` resolves the filename against the directory of the unit the node
+/// was written in -- `parent_path() / filename` -- which is why the resolved
+/// string is what the object holds and what every dump prints.
+#[derive(Clone, Debug)]
+pub struct ImpulseResponseData {
+    pub filename: String,
+    pub volume: f64,
+}
+
+impl Default for ImpulseResponseData {
+    /// `ImpulseResponse::ImpulseResponse` sets the volume and leaves the
+    /// filename empty; `initialize` then overwrites both.
+    fn default() -> Self {
+        Self {
+            filename: String::new(),
+            volume: 1.0,
+        }
+    }
 }
 
 /// `ExhaustSystemNode`'s `ExhaustSystem::Parameters`, minus the impulse response
@@ -509,6 +533,16 @@ impl EngineContext {
 
     pub fn exhaust_mut(&mut self, node: usize) -> &mut ExhaustData {
         self.exhausts.entry(node).or_default()
+    }
+
+    /// The impulse response an exhaust names, as `ImpulseResponseNode::generate`
+    /// makes it.
+    pub fn impulse_response(&self, node: usize) -> Option<&ImpulseResponseData> {
+        self.impulse_responses.get(&node)
+    }
+
+    pub fn set_impulse_response(&mut self, node: usize, response: ImpulseResponseData) {
+        self.impulse_responses.insert(node, response);
     }
 
     pub fn head(&self, node: usize) -> Option<&HeadData> {

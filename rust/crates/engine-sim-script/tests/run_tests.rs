@@ -59,7 +59,7 @@ fn the_scripts_engine_simulates_like_the_original() {
         );
     }
 
-    assert_eq!(actual.lines().count(), 16_263);
+    assert_eq!(actual.lines().count(), 16_265);
 }
 
 #[test]
@@ -69,9 +69,10 @@ fn the_engine_has_the_parts_the_script_asked_for() {
     let mut program = build_program(&script);
     program.execute().expect("assets/main.mr runs");
 
-    let engine = build::build(&mut program)
+    let built = build::build(&mut program)
         .expect("the engine builds")
         .expect("the script builds an engine");
+    let engine = built.engine;
 
     assert_eq!(engine.banks.len(), 2);
     assert_eq!(engine.crankshafts.len(), 1);

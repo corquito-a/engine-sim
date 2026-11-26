@@ -108,6 +108,10 @@ pub struct GraphNode {
     /// `Node::m_primaryOutput`: the port `generateAliasNode` looks through.
     pub primary_output: String,
     pub ir_structure: Option<StructureId>,
+    /// `getParentUnit()->getPath()`: the unit that wrote this node's definition.
+    /// `impulse_response` resolves its filename against that unit's directory,
+    /// and the graph keeps the string because a `Program` has no arena.
+    pub unit_path: Option<String>,
     pub context: Option<ContextId>,
     /// `Node::m_container` -- the container that holds this node.
     pub container: Option<NodeId>,
@@ -191,6 +195,7 @@ impl Graph {
             output_references: Vec::new(),
             primary_output: String::new(),
             ir_structure: None,
+            unit_path: None,
             context: None,
             container: None,
             interface_input: None,
@@ -847,6 +852,16 @@ fn class_spec(builtin: &str) -> Option<ClassSpec> {
     })
 }
 
+/// `IrParserStructure::getParentUnit()->getPath()`.
+fn unit_path_of(arena: &Arena, structure: StructureId) -> Option<String> {
+    let unit = arena.entry(structure).parent_unit?;
+
+    match arena.kind(unit) {
+        Kind::Unit(data) => Some(data.path.clone()),
+        _ => None,
+    }
+}
+
 /// `LanguageRules::generateBuiltinType`: instantiate the class, then
 /// `Node::initialize` registers its ports.
 fn generate_builtin(graph: &mut Graph, builtin: &str) -> Option<NodeId> {
@@ -1130,6 +1145,7 @@ impl Arena {
             let container_node = graph.new_node(NodeClass::Container);
             graph.nodes[container_node].name = data.name.data.clone();
             graph.nodes[container_node].ir_structure = Some(structure);
+            graph.nodes[container_node].unit_path = unit_path_of(self, structure);
             graph.nodes[container_node].context = Some(context);
             graph.nodes[container_node].container = Some(parent_container);
 
@@ -1155,6 +1171,7 @@ impl Arena {
             let node = generate_builtin(graph, &builtin)?;
             graph.nodes[node].name = data.name.data.clone();
             graph.nodes[node].ir_structure = Some(structure);
+            graph.nodes[node].unit_path = unit_path_of(self, structure);
             graph.nodes[node].context = Some(context);
             graph.nodes[node].literal = data.literal.clone();
 

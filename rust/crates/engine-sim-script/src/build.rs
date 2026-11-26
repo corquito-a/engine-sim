@@ -21,10 +21,14 @@
 //! have to be in place when the `Arc` is shared, so the master rods are resolved
 //! after every rod exists and before any piston holds one.
 //!
-//! Not built here, because nothing in the trace reads them: the script's own
-//! `vehicle`/`transmission` (the application -- and the trace harness -- build
-//! their own) and the `impulse_response` an exhaust names (the audio layer's
-//! table is installed by whoever owns the synthesizer).
+//! The one thing `buildEngine` produces that an `Engine` cannot hold is the
+//! `impulse_response` an exhaust names: it is a file, and
+//! `EngineSimApplication` opens it and hands the samples to the synthesizer.
+//! [`build`] therefore returns the responses alongside the engine, one per
+//! exhaust, and [`simulator`] installs them.
+//!
+//! Not built here: the script's own `vehicle`/`transmission` (the application --
+//! and the trace harness -- build their own, and no asset here sets one).
 
 use std::sync::Arc;
 
@@ -42,13 +46,26 @@ use engine_sim_core::parts::{
 };
 
 use crate::objects::{
-    BankData, CamshaftData, CrankData, ExhaustData, HeadData, IntakeData, RodData, ValvetrainData,
+    BankData, CamshaftData, CrankData, ExhaustData, HeadData, ImpulseResponseData, IntakeData,
+    RodData, ValvetrainData,
 };
 use crate::program::Program;
 
+/// What `buildEngine` leaves behind: the engine, and the impulse response each
+/// exhaust system named.
+///
+/// The response is the one part of `ExhaustSystem::Parameters` an engine cannot
+/// hold: it is a file, and reading it is the application's job
+/// (`EngineSimApplication` opens it and hands the samples to the synthesizer).
+/// The list is in the engine's exhaust order, so index `i` is exhaust `i`'s.
+pub struct BuiltEngine {
+    pub engine: Engine,
+    pub impulse_responses: Vec<Option<ImpulseResponseData>>,
+}
+
 /// `EngineNode::buildEngine`. `Ok(None)` when the script built no engine, which
 /// is a complete answer rather than an error.
-pub fn build(program: &mut Program) -> Result<Option<Engine>, String> {
+pub fn build(program: &mut Program) -> Result<Option<BuiltEngine>, String> {
     let engine = match program.context.published_engine() {
         Some(engine) => engine.clone(),
         None => return Ok(None),
@@ -394,6 +411,7 @@ pub fn build(program: &mut Program) -> Result<Option<Engine>, String> {
     }
 
     let mut exhausts: Vec<ExhaustSystem> = Vec::new();
+    let mut impulse_responses: Vec<Option<ImpulseResponseData>> = Vec::new();
     for (index, node) in exhaust_nodes.iter().enumerate() {
         let data: ExhaustData = *program
             .context
@@ -414,6 +432,15 @@ pub fn build(program: &mut Program) -> Result<Option<Engine>, String> {
         // `Engine::initialize` stamps this: the flow staging buffer is indexed
         // by it, so two exhaust systems share one only if the index is wrong.
         exhaust.index = index as i32;
+
+        // `ExhaustSystemNode::generate` calls the response node's `generate` and
+        // stores what it makes; `ExhaustSystem::initialize` keeps only the
+        // pointer, which nothing in the engine ever dereferences.
+        impulse_responses.push(
+            data.impulse_response
+                .and_then(|node| program.context.impulse_response(node))
+                .cloned(),
+        );
 
         exhausts.push(exhaust);
     }
@@ -510,7 +537,10 @@ pub fn build(program: &mut Program) -> Result<Option<Engine>, String> {
     built.intakes = intakes;
     built.exhausts = exhausts;
 
-    Ok(Some(built))
+    Ok(Some(BuiltEngine {
+        engine: built,
+        impulse_responses,
+    }))
 }
 
 /// A piston waiting for the rods to settle.
@@ -635,10 +665,15 @@ impl CrankParams {
 /// and transmission `EngineSimApplication::loadScript` falls back to when the
 /// script brings its own, and set up the way the application sets it up.
 ///
-/// The impulse response is the deterministic one the parity harness installs on
-/// every exhaust channel, so the trace's audio is reproducible.
+/// Audio is the application's, not the engine's: every exhaust channel gets the
+/// wave file its `impulse_response` named, scaled by that node's volume, read the
+/// way `ysWindowsAudioWaveFile` reads it. An exhaust with no response falls back
+/// to the deterministic table `fn impulse_response` generates, which is what the
+/// core harness uses for the hand-built engine.
 pub fn simulator(program: &mut Program) -> Result<Simulator, String> {
-    let engine = build(program)?.ok_or_else(|| "the script builds no engine".to_string())?;
+    let built = build(program)?.ok_or_else(|| "the script builds no engine".to_string())?;
+    let impulse_responses = built.impulse_responses;
+    let engine = built.engine;
 
     let vehicle = Vehicle::new(
         units::mass(1597.0, units::KG),
@@ -670,11 +705,24 @@ pub fn simulator(program: &mut Program) -> Result<Simulator, String> {
     }
 
     {
-        let response = impulse_response(512);
+        let fallback = impulse_response(512);
+
         for i in 0..simulator.engine.get_exhaust_system_count() {
-            simulator
-                .synthesizer
-                .initialize_impulse_response(&response, 1.0, i);
+            match impulse_responses.get(i).and_then(|response| response.as_ref()) {
+                Some(response) => {
+                    let wave = crate::wav::read(&response.filename)?;
+                    simulator.synthesizer.initialize_impulse_response(
+                        &wave.samples,
+                        response.volume as f32,
+                        i,
+                    );
+                }
+                None => {
+                    simulator
+                        .synthesizer
+                        .initialize_impulse_response(&fallback, 1.0, i);
+                }
+            }
         }
     }
 

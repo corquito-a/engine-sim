@@ -44,6 +44,44 @@ fn the_engine_main_mr_configures_matches_the_recorded_header() {
     // reports no displacement yet -- and neither do its pistons.
     assert!(lines.contains(&"E,displacement,0000000000000000"));
     assert!(lines.contains(&"E,cyl0_piston_displacement,0000000000000000"));
+
+    // The audio the exhaust runs on: the file the script's library node named,
+    // resolved against that node's own unit (`es/sound-library/`), at the volume
+    // the node asked for. `main.mr` imports `01_subaru_ej25_eh.mr`, which uses
+    // `ir_lib.minimal_muffling_02`.
+    assert!(lines.contains(&"E,exhaust0_impulse_response,es/sound-library/new/minimal_muffling_02.wav"));
+    assert!(lines.contains(&"E,exhaust0_impulse_response_volume,3f847ae147ae147b"));
+}
+
+/// The response an exhaust names is a file, and the audio layer reads it: the
+/// path the node resolved has to exist, and has to decode to the sample count
+/// the synthesizer will then convolve with.
+#[test]
+fn the_exhaust_impulse_response_is_a_file_that_decodes() {
+    let script = repo_root().join("assets/main.mr");
+    let mut program = build_program(&script);
+    program.execute().expect("assets/main.mr runs");
+
+    let built = engine_sim_script::build::build(&mut program)
+        .expect("the engine builds")
+        .expect("the script builds an engine");
+
+    assert_eq!(built.impulse_responses.len(), built.engine.exhausts.len());
+
+    let response = built.impulse_responses[0]
+        .as_ref()
+        .expect("the exhaust names an impulse response");
+
+    assert!(response.filename.ends_with("new/minimal_muffling_02.wav"));
+    assert_eq!(response.volume, 0.01);
+
+    let wave = engine_sim_script::wav::read(&response.filename).expect("the file decodes");
+
+    assert_eq!(wave.channels, 1);
+    assert_eq!(wave.sample_rate, 44100);
+    assert_eq!(wave.bits_per_sample, 16);
+    assert_eq!(wave.frames, 17555);
+    assert_eq!(wave.samples.len(), 17555);
 }
 
 #[test]

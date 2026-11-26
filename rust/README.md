@@ -271,7 +271,8 @@ The engine's "sound" is a single `f64` per exhaust per frame
 (`Simulator::writeToSynthesizer`), resampled from 10 kHz to 44.1 kHz and run
 through a fixed chain: jitter (with its own `std::default_random_engine` and two
 `rand()` draws per sample in `renderAudio`), a DC-blocking low pass, a
-derivative/level mix, a 512-tap convolution with a synthesised impulse response,
+derivative/level mix, a 512-tap convolution with the impulse response the script
+names (or a synthesised one when it names none),
 a 4th-order Butterworth, a leveling filter, and an `int16` round-and-clamp.
 The port reproduces all of it operation for operation, including:
 
@@ -320,7 +321,13 @@ the reference's audio thread, so PCM output is reproducible.
      `actions.h` entry points. Gate: `script_reference --run` against the
      recorded `crates/engine-sim-script/fixtures/main_engine.trace`, then the
      same for every engine asset, which retires the hand-written TRX520 fixture.
-   * **M5 — the `.wav` impulse responses** in `es/sound-library/`.
+   * **M5 — the `.wav` impulse responses** in `es/sound-library/`: done.
+     `src/wav.rs` is `ysWindowsAudioWaveFile`'s parse (chunks, block alignment,
+     `dataSize / blockAlign` frames) and `src/paths.rs` is the filename rule
+     `ImpulseResponseNode::generate` applies; `build` returns the responses beside
+     the engine and `simulator` installs them, so the trace's audio is a
+     convolution over the real samples. Gated by `run_script_parity.sh`'s `WAVE`
+     (both decoders, all ten files, hash over every sample).
 2. **App shell** (window, render, UI, audio output) last; it is where the port
    can finally diverge from the C++ without losing fidelity.
 
@@ -389,7 +396,7 @@ The gate (`run_script_parity.sh`) currently reports:
 
 ```
 -- 58 files round-tripped and validated, 0 mismatches
-PASS: 16263 engine/trace checkpoints match the recorded fixture
+PASS: 16265 engine/trace checkpoints match the recorded fixture
 ```
 
 The second line is the interesting one: the oracle resolves, validates, builds

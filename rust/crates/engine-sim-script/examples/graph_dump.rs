@@ -235,6 +235,11 @@ fn main() {
                 objects.push((id, internal, "vehicle"));
             }
         }
+        for internal in program.nodes_of_class("impulse_response") {
+            if let Some(id) = node_ids[internal] {
+                objects.push((id, internal, "impulse_response"));
+            }
+        }
         for internal in program.nodes_of_class("cylinder_bank") {
             if let Some(id) = node_ids[internal] {
                 objects.push((id, internal, "cylinder_bank"));
@@ -333,6 +338,26 @@ fn main() {
                         angle.to_bits()
                     );
                 }
+
+                continue;
+            }
+
+            if kind == "impulse_response" {
+                let response = match program.context.impulse_response(internal) {
+                    Some(response) => response.clone(),
+                    None => continue,
+                };
+
+                println!(
+                    "O,{},impulse_response_filename,{}",
+                    node,
+                    engine_sim_script::paths::display(&response.filename)
+                );
+                println!(
+                    "O,{},impulse_response_volume,{:016x}",
+                    node,
+                    response.volume.to_bits()
+                );
 
                 continue;
             }

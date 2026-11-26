@@ -54,6 +54,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <unistd.h>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -1068,6 +1069,23 @@ static void dumpGraph(piranha::NodeProgram *program, GraphDumper *dumper) {
 ///   O,<nodeId>,sample,<index>,<x bits>,<y bits>
 ///
 /// Only `function` is here: it is the first of M4's data nodes.
+/// A path as a header prints it: relative to the working directory when it is
+/// under it. The object holds what `ImpulseResponseNode::generate` resolved --
+/// an absolute path, because the units are absolute -- and a fixture that
+/// recorded that would not survive a different checkout directory.
+static std::string relativePath(const std::string &path) {
+    char cwd[4096];
+    if (getcwd(cwd, sizeof(cwd)) == nullptr) return path;
+
+    std::string prefix(cwd);
+    prefix += '/';
+    if (path.size() > prefix.size() && path.compare(0, prefix.size(), prefix) == 0) {
+        return path.substr(prefix.size());
+    }
+
+    return path;
+}
+
 struct ObjectDumper {
     /// How many points of the curve are printed, inclusive of both ends.
     static const int Probes = 16;
@@ -1231,6 +1249,19 @@ struct ObjectDumper {
             // keeps the pointer `generate` handed it; nothing in the dump asks for
             // it again.)
             crankshaft.destroy();
+            return;
+        }
+
+        if (es_script::ImpulseResponseNode *responseNode =
+                dynamic_cast<es_script::ImpulseResponseNode *>(node)) {
+            // `generate` resolves the filename against the defining unit's
+            // directory and reads nothing, so the object is a string and a
+            // number; the samples are the audio layer's, and `--wave` reads them.
+            ImpulseResponse *response = responseNode->generate(&context);
+
+            std::printf("O,%d,impulse_response_filename,%s\n", nodeId,
+                relativePath(response->getFilename()).c_str());
+            emitScalar(nodeId, "impulse_response_volume", response->getVolume());
             return;
         }
 
@@ -1501,6 +1532,21 @@ static void dumpEngine(Engine *engine) {
         emitValue("E", name, exhaust->getVelocityDecay());
         std::snprintf(name, sizeof(name), "exhaust%d_audio_volume", i);
         emitValue("E", name, exhaust->getAudioVolume());
+
+        // The impulse response is a file, not a number, and the application opens
+        // it by name; the path is printed relative to the working directory so a
+        // recorded header stays portable.
+        ImpulseResponse *response = exhaust->getImpulseResponse();
+        std::string filename;
+        double volume = 1.0;
+        if (response != nullptr) {
+            filename = relativePath(response->getFilename());
+            volume = response->getVolume();
+        }
+        std::snprintf(name, sizeof(name), "exhaust%d_impulse_response", i);
+        emitText("E", name, filename);
+        std::snprintf(name, sizeof(name), "exhaust%d_impulse_response_volume", i);
+        emitValue("E", name, volume);
     }
 }
 
@@ -1640,7 +1686,8 @@ int main(int argc, char **argv) {
             "       script_reference --resolved <root.mr> <dump.txt>\n"
             "       script_reference --errors <root.mr> <dump.txt>\n"
             "       script_reference --graph   <root.mr> <dump.txt>\n"
-            "       script_reference --builtin-ports <names.txt>\n");
+            "       script_reference --builtin-ports <names.txt>\n"
+            "       script_reference --wave <file.wav>\n");
         return 2;
     }
 
@@ -1665,6 +1712,21 @@ int main(int argc, char **argv) {
         }
 
         dumpBuiltinPorts(builtinPortLanguageRules, argv[2]);
+        return 0;
+    }
+
+    // `--wave` decodes one file with the same reader the run harness installs, so
+    // the port's decoder can be compared with it sample for sample.
+    if (mode == "--wave") {
+        WaveFile wave;
+        if (!wave.open(argv[2])) {
+            std::fprintf(stderr, "could not read %s\n", argv[2]);
+            return 1;
+        }
+
+        std::printf("W,%s,%d,%d,%d,%d,%016llx\n", argv[2], wave.channels,
+            wave.sampleRate, wave.bitsPerSample, wave.frames,
+            (unsigned long long)wave_hash(wave));
         return 0;
     }
 

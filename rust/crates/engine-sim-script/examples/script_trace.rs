@@ -2,8 +2,9 @@
 //!
 //! `script_reference --run` builds the engine by running the `.mr` script through
 //! the original piranha + es_script stack, wraps it in the default vehicle and
-//! transmission `EngineSimApplication::loadScript` falls back to, installs a
-//! deterministic impulse response, holds the starter, and traces every field of
+//! transmission `EngineSimApplication::loadScript` falls back to, installs the
+//! impulse response each exhaust names (or the deterministic table when it names
+//! none), holds the starter, and traces every field of
 //! `core_trace_common.h`'s `traceFrames`. This does the same from the port's own
 //! front end and its own `engine-sim-core` engine, so the two outputs can be
 //! compared line for line.
