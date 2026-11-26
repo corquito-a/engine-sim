@@ -1311,6 +1311,20 @@ static void dumpObjects(piranha::NodeProgram *program, GraphDumper *dumper) {
     dumper->assign(program->getTopLevelContainer(), -1);
     ObjectDumper objects(dumper->nodeIds);
     objects.dump(program->getTopLevelContainer());
+
+    // `Compiler::Output`'s two drivetrain pointers: whether the script published
+    // one, which is what decides between it and the application's fallback.
+    //
+    // The numbers of a transmission are not records here: `Transmission` and
+    // `TransmissionNode` both keep them protected, so the object dump cannot see
+    // them without patching the staged header. They are gated instead by the
+    // driven run (`DRIVEN` with the clutch engaged), where a wrong ratio or
+    // clutch limit moves the engine.
+    es_script::Compiler::Output *output = es_script::Compiler::output();
+    std::printf("O,0,selected_vehicle,%d\n",
+        (output != nullptr && output->vehicle != nullptr) ? 1 : 0);
+    std::printf("O,0,selected_transmission,%d\n",
+        (output != nullptr && output->transmission != nullptr) ? 1 : 0);
 }
 
 /// Every value the built graph can produce, one line per port.
@@ -1550,29 +1564,38 @@ static void dumpEngine(Engine *engine) {
     }
 }
 
-/// Builds the default vehicle and transmission the application falls back to
-/// when the script does not create them (`EngineSimApplication::loadScript`).
+/// `EngineSimApplication::loadScript`'s drivetrain: the vehicle and transmission
+/// the script published, and the application's own only where it published none
+/// (one fallback each, not a pair).
 static void loadEngineAndTrace(Engine *engine, int stepCount) {
-    Vehicle::Parameters vehParams;
-    vehParams.mass = units::mass(1597, units::kg);
-    vehParams.diffRatio = 3.42;
-    vehParams.tireRadius = units::distance(10, units::inch);
-    vehParams.dragCoefficient = 0.25;
-    vehParams.crossSectionArea =
-        units::distance(6.0, units::foot) * units::distance(6.0, units::foot);
-    vehParams.rollingResistance = 2000.0;
+    es_script::Compiler::Output *output = es_script::Compiler::output();
 
-    auto *vehicle = new Vehicle;
-    vehicle->initialize(vehParams);
+    Vehicle *vehicle = (output != nullptr) ? output->vehicle : nullptr;
+    if (vehicle == nullptr) {
+        Vehicle::Parameters vehParams;
+        vehParams.mass = units::mass(1597, units::kg);
+        vehParams.diffRatio = 3.42;
+        vehParams.tireRadius = units::distance(10, units::inch);
+        vehParams.dragCoefficient = 0.25;
+        vehParams.crossSectionArea =
+            units::distance(6.0, units::foot) * units::distance(6.0, units::foot);
+        vehParams.rollingResistance = 2000.0;
 
-    const double gearRatios[] = { 2.97, 2.07, 1.43, 1.00, 0.84, 0.56 };
-    Transmission::Parameters tParams;
-    tParams.GearCount = 6;
-    tParams.GearRatios = gearRatios;
-    tParams.MaxClutchTorque = units::torque(1000.0, units::ft_lb);
+        vehicle = new Vehicle;
+        vehicle->initialize(vehParams);
+    }
 
-    auto *transmission = new Transmission;
-    transmission->initialize(tParams);
+    Transmission *transmission = (output != nullptr) ? output->transmission : nullptr;
+    if (transmission == nullptr) {
+        const double gearRatios[] = { 2.97, 2.07, 1.43, 1.00, 0.84, 0.56 };
+        Transmission::Parameters tParams;
+        tParams.GearCount = 6;
+        tParams.GearRatios = gearRatios;
+        tParams.MaxClutchTorque = units::torque(1000.0, units::ft_lb);
+
+        transmission = new Transmission;
+        transmission->initialize(tParams);
+    }
 
     auto *simulator = static_cast<PhysicsSimulator *>(
         engine->createSimulator(vehicle, transmission));
@@ -1610,6 +1633,14 @@ static void loadEngineAndTrace(Engine *engine, int stepCount) {
 
     if (const char *ignition = std::getenv("PARITY_IGNITION")) {
         options.ignition = std::atoi(ignition);
+    }
+
+    if (const char *clutch = std::getenv("PARITY_CLUTCH")) {
+        options.clutch = std::atof(clutch);
+    }
+
+    if (const char *gear = std::getenv("PARITY_GEAR")) {
+        options.gear = std::atoi(gear);
     }
 
     dumpEngine(engine);

@@ -153,6 +153,7 @@ pub struct EngineContext {
     rods: BTreeMap<usize, RodData>,
     crankshafts: BTreeMap<usize, CrankData>,
     vehicles: BTreeMap<usize, VehicleData>,
+    transmissions: BTreeMap<usize, TransmissionData>,
     rod_journals: BTreeMap<usize, RodJournalData>,
     crankshaft_journals: BTreeMap<usize, Vec<usize>>,
     /// `CylinderHeadNode::m_bank`.
@@ -180,6 +181,13 @@ pub struct EngineContext {
 
     /// `ConnectingRodNode::m_rodJournals`, in order.
     rod_slave_journals: BTreeMap<usize, Vec<usize>>,
+
+    /// `Compiler::Output::vehicle` and `::transmission`: the nodes
+    /// `set_vehicle` and `set_transmission` chose, which is what the application
+    /// drives. `None` means the script set neither and the application falls back
+    /// to its own pair.
+    selected_vehicle: Option<usize>,
+    selected_transmission: Option<usize>,
 }
 
 /// `RodJournalNode`'s `m_angle`, plus the crankshaft and rod the actions stamp
@@ -347,6 +355,26 @@ pub struct VehicleData {
     pub rolling_resistance: f64,
 }
 
+/// `TransmissionNode`'s `Transmission::Parameters`: the clutch's limit, plus the
+/// ratios `add_gear` pushed onto it. `Transmission::Parameters` has no default
+/// initialisers in C++, so a node that never read its input holds whatever was
+/// there; every script's `transmission` supplies `max_clutch_torque`, and the
+/// port starts from `Transmission`'s own default.
+#[derive(Clone, Debug)]
+pub struct TransmissionData {
+    pub max_clutch_torque: f64,
+    pub gear_ratios: Vec<f64>,
+}
+
+impl Default for TransmissionData {
+    fn default() -> Self {
+        Self {
+            max_clutch_torque: engine_sim_core::units::torque(1000.0, engine_sim_core::units::FT_LB),
+            gear_ratios: Vec::new(),
+        }
+    }
+}
+
 /// `ConnectingRodNode`'s `ConnectingRod::Parameters`, minus the pointers it
 /// stamps in when it generates.
 #[derive(Clone, Copy, Debug, Default)]
@@ -462,6 +490,43 @@ impl EngineContext {
 
     pub fn set_vehicle(&mut self, node: usize, vehicle: VehicleData) {
         self.vehicles.insert(node, vehicle);
+    }
+
+    pub fn transmission(&self, node: usize) -> Option<&TransmissionData> {
+        self.transmissions.get(&node)
+    }
+
+    pub fn set_transmission(&mut self, node: usize, transmission: TransmissionData) {
+        self.transmissions.insert(node, transmission);
+    }
+
+    /// `TransmissionNode::addGear`. A ratio pushed onto a node that never
+    /// evaluated is dropped, exactly as the C++ dereferences the node it was
+    /// given.
+    pub fn add_gear(&mut self, node: usize, ratio: f64) {
+        if let Some(transmission) = self.transmissions.get_mut(&node) {
+            transmission.gear_ratios.push(ratio);
+        }
+    }
+
+    /// `SetVehicleNode::_evaluate`: `Compiler::output()->vehicle`.
+    pub fn select_vehicle(&mut self, node: usize) {
+        self.selected_vehicle = Some(node);
+    }
+
+    /// `SetTransmissionNode::_evaluate`: `Compiler::output()->transmission`.
+    pub fn select_transmission(&mut self, node: usize) {
+        self.selected_transmission = Some(node);
+    }
+
+    /// The vehicle the script published, if it published one.
+    pub fn selected_vehicle(&self) -> Option<&VehicleData> {
+        self.vehicles.get(&self.selected_vehicle?)
+    }
+
+    /// The transmission the script published, if it published one.
+    pub fn selected_transmission(&self) -> Option<&TransmissionData> {
+        self.transmissions.get(&self.selected_transmission?)
     }
 
     pub fn rod_journal(&self, node: usize) -> Option<&RodJournalData> {

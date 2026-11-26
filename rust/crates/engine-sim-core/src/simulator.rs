@@ -818,6 +818,14 @@ impl Simulator {
         }
     }
 
+    /// `EngineSimApplication::processEngineInput`'s `setClutchPressure`: the
+    /// transmission's clutch is a torque limit scaled by this, and it starts at
+    /// zero -- the application ramps it to one within a millisecond unless the
+    /// clutch key is held.
+    pub fn set_clutch_pressure(&mut self, pressure: f64) {
+        self.transmission.lock().unwrap().clutch_pressure = pressure;
+    }
+
     pub fn set_dyno_rotation_speed(&mut self, speed: f64) {
         if let Some(dyno) = self
             .solver

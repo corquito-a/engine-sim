@@ -447,6 +447,19 @@ fn main() {
             // own block dumps it.
         }
 
+        // The drivetrain `set_vehicle`/`set_transmission` published. `Compiler::Output`
+        // holds the objects, not the nodes, so all this side can compare is
+        // whether there is one; the numbers are the `vehicle_*` records, and a
+        // transmission's are the driven run's (the node keeps them protected).
+        println!(
+            "O,0,selected_vehicle,{}",
+            if program.context.selected_vehicle().is_some() { 1 } else { 0 }
+        );
+        println!(
+            "O,0,selected_transmission,{}",
+            if program.context.selected_transmission().is_some() { 1 } else { 0 }
+        );
+
         if let Some(error) = program.runtime_error() {
             eprintln!("runtime error: {}", error);
             std::process::exit(1);

@@ -662,8 +662,9 @@ impl CrankParams {
 }
 
 /// The application's half: the engine the script built, wrapped in the vehicle
-/// and transmission `EngineSimApplication::loadScript` falls back to when the
-/// script brings its own, and set up the way the application sets it up.
+/// and transmission the script published (or, where it published none, the pair
+/// `EngineSimApplication::loadScript` falls back to), and set up the way the
+/// application sets it up.
 ///
 /// Audio is the application's, not the engine's: every exhaust channel gets the
 /// wave file its `impulse_response` named, scaled by that node's volume, read the
@@ -675,19 +676,37 @@ pub fn simulator(program: &mut Program) -> Result<Simulator, String> {
     let impulse_responses = built.impulse_responses;
     let engine = built.engine;
 
-    let vehicle = Vehicle::new(
-        units::mass(1597.0, units::KG),
-        0.25,
-        units::distance(6.0, units::FOOT) * units::distance(6.0, units::FOOT),
-        3.42,
-        units::distance(10.0, units::INCH),
-        2000.0,
-    );
+    // `EngineSimApplication::loadScript`: the vehicle and transmission the script
+    // published, and the application's own only where it published none -- one
+    // fallback each, so a script may bring a vehicle without a transmission.
+    let vehicle = match program.context.selected_vehicle().copied() {
+        Some(vehicle) => Vehicle::new(
+            vehicle.mass,
+            vehicle.drag_coefficient,
+            vehicle.cross_sectional_area,
+            vehicle.diff_ratio,
+            vehicle.tire_radius,
+            vehicle.rolling_resistance,
+        ),
+        None => Vehicle::new(
+            units::mass(1597.0, units::KG),
+            0.25,
+            units::distance(6.0, units::FOOT) * units::distance(6.0, units::FOOT),
+            3.42,
+            units::distance(10.0, units::INCH),
+            2000.0,
+        ),
+    };
 
-    let transmission = Transmission::new(
-        vec![2.97, 2.07, 1.43, 1.00, 0.84, 0.56],
-        units::torque(1000.0, units::FT_LB),
-    );
+    let transmission = match program.context.selected_transmission().cloned() {
+        Some(transmission) => {
+            Transmission::new(transmission.gear_ratios, transmission.max_clutch_torque)
+        }
+        None => Transmission::new(
+            vec![2.97, 2.07, 1.43, 1.00, 0.84, 0.56],
+            units::torque(1000.0, units::FT_LB),
+        ),
+    };
 
     let mut simulator = Simulator::new(engine, vehicle, transmission);
 

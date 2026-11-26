@@ -25,6 +25,15 @@
 #          cannot see when a cylinder fires; this one can, because every firing
 #          has to land on the same crank angle on both sides.
 #
+#   DRIVE  two scripts in `tools/parity/engines/`, driven in first gear with the
+#          clutch engaged: the Honda wrapper, which publishes the bike it came
+#          from, and an engine built straight from an asset's engine node, which
+#          publishes neither. The engine's torque has to move the script's
+#          vehicle through the script's transmission in the first case and the
+#          application's pair in the second, so `loadScript`'s fallback -- the
+#          gear ratios, the clutch's limit, the car's mass and drag -- reaches
+#          the trace either way.
+#
 #   GRAPH  every script in `tools/parity/graph/` is built into a node graph by
 #          the original (`IrCompilationUnit::build`) and compared against the
 #          recorded structure. The Rust node graph is what has to reproduce it.
@@ -150,9 +159,13 @@ if [ "${RESOLVED_GAP:-0}" = "1" ]; then
 fi
 
 echo "== gate IR: parse every script =="
-"$RUST_DIR/target/release/examples/corpus_check" "$REPO_ROOT/es" "$REPO_ROOT/assets"
+# `tools/parity/engines/` is in here too: the fixtures the DRIVE gate runs are
+# scripts like any other, and the original's resolve/validate stages are what
+# caught them writing a vehicle the original cannot resolve.
+"$RUST_DIR/target/release/examples/corpus_check" "$REPO_ROOT/es" "$REPO_ROOT/assets" \
+    "$REPO_ROOT/rust/tools/parity/engines"
 
-FILES=$(find "$REPO_ROOT/es" "$REPO_ROOT/assets" -name '*.mr' | sort)
+FILES=$(find "$REPO_ROOT/es" "$REPO_ROOT/assets" "$REPO_ROOT/rust/tools/parity/engines" -name '*.mr' | sort)
 COUNT=0
 MISMATCHES=0
 
@@ -230,7 +243,9 @@ fi
 # fires, so nothing in it can catch a difference in combustion. This gate presses
 # the keys -- ignition on, starter held for a second and released, throttle wide
 # open -- and runs twenty thousand frames, two seconds of a running engine, where
-# every firing has to land on the same crank angle on both sides.
+# every firing has to land on the same crank angle on both sides. `PARITY_THROTTLE`
+# is the engine's *speed control*, the channel the application's keys drive, and
+# one is wide open.
 echo "== gate DRIVEN: a running engine, both sides =="
 DRIVEN_STEPS=20000
 
@@ -250,6 +265,54 @@ else
     diff "$WORK/driven.trace" "$WORK/driven.port.trace" | head -20
     exit 1
 fi
+
+# The drivetrain. Both branches of `EngineSimApplication::loadScript`'s rule have
+# to be gated, because each one hides the other: a script that publishes a vehicle
+# and a transmission has to move *that* car, and a script that publishes neither
+# has to move the application's. Either comparison is also the only place the gear
+# ratios can be seen at all -- `Transmission` keeps them protected -- and they only
+# reach the trace when the engine is in gear, so both runs engage first and let the
+# clutch out at wide-open throttle.
+echo "== gate DRIVE: the script's own vehicle and transmission =="
+drive_one() {
+    local name="$1" script="$2" ir="$3"
+
+    PARITY_STEPS="$DRIVEN_STEPS" PARITY_THROTTLE=1 PARITY_STARTER_SECONDS=1 PARITY_IGNITION=1 \
+        PARITY_GEAR=1 PARITY_CLUTCH=1 \
+        "$SCRIPT_TRACE" "$script" > "$WORK/$name.port.trace" 2> "$WORK/$name.port.err" \
+        || { echo "FAIL: the port could not drive $script"; head -20 "$WORK/$name.port.err"; exit 1; }
+
+    PARITY_STEPS="$DRIVEN_STEPS" PARITY_THROTTLE=1 PARITY_STARTER_SECONDS=1 PARITY_IGNITION=1 \
+        PARITY_GEAR=1 PARITY_CLUTCH=1 \
+        "$WORK/script_reference" --run "$script" "$ir" "$DRIVEN_STEPS" \
+            > "$WORK/$name.trace" 2> "$WORK/$name.err" \
+        || { echo "FAIL: the oracle could not drive $script"; head -20 "$WORK/$name.err"; exit 1; }
+
+    if diff -q "$WORK/$name.trace" "$WORK/$name.port.trace" >/dev/null; then
+        echo "PASS: $(wc -l < "$WORK/$name.trace") checkpoints, $script"
+    else
+        echo "FAIL: $script diverges in the drivetrain"
+        diff "$WORK/$name.trace" "$WORK/$name.port.trace" | head -20
+        exit 1
+    fi
+}
+
+# From the script: the bike's 500 kg, five ratios and 50 ft-lb clutch.
+DRIVE_SCRIPT="$HERE/engines/engines_atg-video-1_01_honda_trx520.mr"
+"$IR_DUMP" "$DRIVE_SCRIPT" > "$WORK/drive_from_script.ir"
+drive_one drive_from_script "$DRIVE_SCRIPT" "$WORK/drive_from_script.ir"
+
+# From the script as far as it goes: a 900 kg car of its own, the application's
+# gearbox behind it. `loadScript` decides per object, so this run is what catches a
+# port that swapped both or neither.
+DRIVE_MIXED="$HERE/engines/vehicle_without_transmission.mr"
+"$IR_DUMP" "$DRIVE_MIXED" > "$WORK/drive_mixed.ir"
+drive_one drive_mixed "$DRIVE_MIXED" "$WORK/drive_mixed.ir"
+
+# From the application: the same engine with no vehicle and no transmission.
+DRIVE_FALLBACK="$HERE/engines/drivetrain_from_application.mr"
+"$IR_DUMP" "$DRIVE_FALLBACK" > "$WORK/drive_fallback.ir"
+drive_one drive_fallback "$DRIVE_FALLBACK" "$WORK/drive_fallback.ir"
 
 # The node graph the IR generates: every fixture, plus every script under
 # `assets/`, against a live reference (`--record` rewrites the fixtures).

@@ -1444,14 +1444,14 @@ sets it. The script-built engine's entire combustion path — the plug angles
 flame front, the fuel's random efficiency term, the `rand()` draw order — was
 outside every gate.
 
-The CLI found it the way a user would: `engine-sim-cli assets/main.mr --throttle 1`
-cranked to the starter's speed, let go, and stopped. One line in the driver
-(`ignition.enabled = true`) and the same script idles at ~790 rpm.
+The CLI found it the way a user would: the engine cranked to the starter's speed,
+let go, and stopped. One line in the driver (`ignition.enabled = true`) and the
+same script keeps running.
 
 **`DRIVEN`, the gate that would have caught it.** `run_script_parity.sh` gained a
 fourth kind of run: `PARITY_IGNITION=1`, `PARITY_STARTER_SECONDS=1`,
 `PARITY_THROTTLE=1`, `PARITY_STEPS=20000`, on both sides. Two seconds of a running
-engine, 1 740 frames with a lit chamber, chamber peaks near 17 bar, and
+engine, a lit chamber for most of them, and
 **808 301 checkpoints identical** — physics, gas dynamics, synthesizer input and
 rendered `int16` audio. It costs three seconds and it is the only gate that sees a
 spark, so it is where a wrong firing order, a wrong advance curve or a `rand()`
@@ -1477,7 +1477,7 @@ kind.
 | `a_throttle_outside_the_range_is_refused` | `--throttle 1.5` is refused |
 | `a_gear_the_transmission_does_not_have_is_refused` | `--gear 99` is refused after the script builds (the gear count is not knowable before) |
 | `a_run_writes_a_wave_file_of_the_length_it_simulated` | 0.2 s → 8 820 samples; RIFF/`WAVE`/`fmt `/`data`; mono, 44 100 Hz, 16-bit; data block = 2 × samples; one CSV row per frame plus the header |
-| `the_engine_runs_once_the_starter_is_released` | > 300 rpm one and a half seconds in, and < 50 rpm with `--no-ignition` |
+| `the_engine_runs_once_the_starter_is_released` | > 1 500 rpm one and a half seconds in (the starter's own speed is 500), and under 500 rpm with `--no-ignition` |
 
 That last one is the important shape: it does not check a number, it checks that
 the engine *is an engine* — that it fires, and that turning the spark off stops
@@ -1485,7 +1485,80 @@ it. A regression that silently disabled combustion would fail it, and nothing el
 in the suite would notice.
 
 `--dyno <rpm>` is the other thing the CLI adds that a trace cannot express: a
-held speed with a real torque reading (240 Nm / 75 kW at 3 000 rpm wide open, 30
-Nm at part throttle). The sign is the API's — the dynamometer reports the
-constraint's reaction, which is negative while it is being driven — so the summary
-negates it and the CSV keeps it raw.
+held speed with a real torque reading. The sign is the API's — the dynamometer
+reports the constraint's *reaction*, negative while the engine drives it — so the
+summary negates it and the CSV keeps it raw. Which is also why the number needs
+reading with care: held at 3 000 rpm, the EJ25 supplies 30 Nm when it fires wide
+open and needs 240 Nm put *into* it when the throttle is shut, because then the
+dyno is doing all the pumping work. The same inversion made an early version of
+this paragraph quote the second number as if it were the first.
+
+## The drivetrain: the car the gates never moved
+
+M4's trace gates compare an engine, a gas path and an audio chain — and, from the
+moment the script's own vehicle existed, a car. They could not tell: every one of
+them ran in **neutral**, where a transmission's ratios do nothing and a vehicle's
+mass only sets a drag force, so a port that ignored the script's drivetrain
+entirely would have passed all of them. That is the shape of gap this document
+keeps finding: not a wrong number, but a number nothing asks about.
+
+Three things had to be added, and each of them is a general technique.
+
+**The oracle had to implement the rule being tested.** `loadScript` reads
+`es_script::Compiler::output()->vehicle` and `->transmission` and falls back to
+the application's 1597 kg / six-speed **per object**. `script_reference`'s
+`loadEngineAndTrace` now does the same. Had it kept its own hard-coded pair, a
+port that did the same would have compared clean while both sides ignored the
+script.
+
+**The dump had to say which branch was taken.** Both dumpers append
+`O,0,selected_vehicle,<0|1>` and `O,0,selected_transmission,<0|1>` after the object
+loop. The *numbers* cannot be dumped — `Transmission` and `TransmissionNode` keep
+their ratios and clutch limit protected and the harness is a friend of neither —
+so the ratios are gated by a driven run instead: a wrong ratio moves the engine,
+which the trace does see.
+
+**The driver had to be built before the feature could be tested.** `Drive` grew
+`clutch` and `gear` (`PARITY_CLUTCH`, `PARITY_GEAR`), applied the way the
+application applies them: `Transmission` starts at zero clutch pressure and in
+neutral, so nothing in the driveline turns until a driver asks. `DRIVE` then runs
+three fixtures under `tools/parity/engines/`, one per combination of the two
+fallbacks:
+
+| Script | Vehicle | Transmission | Checkpoints |
+|---|---|---|---|
+| `engines_atg-video-1_01_honda_trx520.mr` | the bike's 500 kg | its five ratios, 50 ft-lb clutch | 764 159 identical |
+| `vehicle_without_transmission.mr` | a 900 kg body | the application's six-speed | 808 301 identical |
+| `drivetrain_from_application.mr` | the application's 1597 kg | the application's six-speed | 808 301 identical |
+
+The middle one is the point. A port that treated the pair as a pair — all of the
+script's drivetrain or none of it — would pass the first and third rows and fail
+the middle one.
+
+**A gate hole found by writing the fixtures.** The IR gate parsed `es/` and
+`assets/` but not `tools/parity/engines/`, and the first drafts of both new
+fixtures were scripts the original's resolver *rejects*: a `set_vehicle` of a node
+that never aliased its output, and `units.*` used inside a node with no
+`units units()` in scope. The port accepted both. Neither is a parity bug in the
+sense of a wrong number — the port is *more* permissive than the original — but a
+fixture that only one side can load is worthless, and the fix is the gate: the
+directory is now part of `gate IR` (80 files, `script_reference --check` on each).
+
+**A comparison cannot catch a mistake made on both sides.** The largest bug this
+project has hit was invisible to every gate for exactly that reason.
+`DirectThrottleLinkage` maps a speed control to a plate position with
+`position = 1 - control^gamma`, and `Intake` reads the position through
+`cos(position * pi/2)` — so control 1 is wide open and position 0 is wide open.
+Both drivers passed `1 - throttle` to `setSpeedControl`, which made every run
+described as "wide open" nearly shut. Every gate passed, because the port and the
+oracle were shut together: the EJ25 "revved" to 790 rpm, chamber peaks were
+16 bar, and the dyno needed 240 Nm to drag it round. It only surfaced when the
+drivetrain milestone asked the engine to move a car — the engine was doing nothing,
+so nothing about the car could be reproduced faithfully.
+
+The correction is two characters on each side, and `DRIVEN` now compares an engine
+genuinely at wide-open throttle: the EJ25 runs to 6855 rpm in six seconds. The
+lesson is the one this document opened with, from the other end: an oracle only
+gates what it *also* implements, and an option that names a behaviour (here,
+`PARITY_THROTTLE=1`) has to be checked against that behaviour, not just against
+the other implementation.
