@@ -1,0 +1,28 @@
+// A vehicle the script publishes and a transmission it does not.
+// `EngineSimApplication::loadScript` falls back per *object*, not per pair, so
+// the car here is the script's and the gearbox is the application's six-speed.
+// Beside this file: `engines_..._honda_trx520.mr` publishes both, and
+// `drivetrain_from_application.mr` publishes neither.
+import "engine_sim.mr"
+import "../../../../assets/engines/atg-video-2/01_subaru_ej25_eh.mr" as ej25
+
+units units()
+
+private node car {
+    alias output __out:
+        vehicle(
+            mass: 900 * units.kg,
+            drag_coefficient: 0.31,
+            cross_sectional_area: (60 * units.inch) * (50 * units.inch),
+            diff_ratio: 4.11,
+            tire_radius: 12 * units.inch,
+            rolling_resistance: 250 * units.N
+        );
+}
+
+public node start {
+    set_engine(ej25::subaru_ej25())
+    set_vehicle(car())
+}
+
+start()

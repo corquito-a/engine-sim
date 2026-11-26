@@ -12,9 +12,9 @@
 //!     script_trace <root.mr> [search-path...]
 //!
 //! `PARITY_STEPS` sets the frame count (400, the fixture's), and
-//! `PARITY_THROTTLE`, `PARITY_STARTER_SECONDS`, `PARITY_IGNITION` and
-//! `PARITY_DYNO_RPM` drive the run the way the reference harness's `TraceOptions`
-//! does -- by default the starter is held and nothing else is touched, which is
+//! `PARITY_THROTTLE`, `PARITY_STARTER_SECONDS`, `PARITY_IGNITION`,
+//! `PARITY_DYNO_RPM`, `PARITY_CLUTCH` and `PARITY_GEAR` drive the run the way the
+//! reference harness's `TraceOptions` does -- by default the starter is held and nothing else is touched, which is
 //! what every gate compares.
 
 use engine_sim_script::build;
@@ -57,6 +57,8 @@ fn main() {
         starter_seconds: number("PARITY_STARTER_SECONDS"),
         ignition: number("PARITY_IGNITION").map(|value| value != 0.0),
         dyno_rpm: number("PARITY_DYNO_RPM"),
+        clutch: number("PARITY_CLUTCH"),
+        gear: number("PARITY_GEAR").map(|gear| gear as i32),
     };
 
     let graph = match load_graph(&entry, &search) {

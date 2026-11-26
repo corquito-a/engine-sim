@@ -27,14 +27,14 @@ Motivation and estimates: [`docs/rust-port-assessment.md`](../docs/rust-port-ass
 | `atg_scs` subset (rigid bodies, constraints, NSV solver, Gauss-Seidel) | `submodules/simple-2d-constraint-solver` | ✅ done | bit-exact (whole-core) |
 | `dsp` (low pass, Butterworth f32/f64, derivative, delay, convolution, leveling, jitter, `<random>` compat) | `src/*_filter.cpp`, `delta-studio`'s `convolve.h` | ✅ done | bit-exact (filter harness) |
 | `synth` (input resampling, impulse response, render/mix, int16 out) | `src/synthesizer.cpp` | ✅ done | bit-exact (filter harness + whole-core incl. audio) |
-| `script` front end (`.mr` scanner, parser, IR) | `piranha/flex-bison/*`, `include/ir_*.h` | ✅ done | IR round trip through the original piranha objects, 58 scripts |
+| `script` front end (`.mr` scanner, parser, IR) | `piranha/flex-bison/*`, `include/ir_*.h` | ✅ done | IR round trip through the original piranha objects, 80 scripts |
 | `script` IR substrate (`lower` arena, `channel_type`, `error`) | `include/ir_*.h`, `channel_type`, `compilation_error` | ✅ done | every unit lowers and raises back field-for-field |
 | `script` resolution (definitions, types, attributes) | `piranha/src/ir_*.cpp` | ✅ done | 660/660 + 701/701 rows identical to the reference |
 | `script` circularity checks | `piranha/src/ir_*.cpp` | ✅ done | E0020 gated by fixtures |
 | `script` validation (reported errors) | `piranha/src/ir_*.cpp` | ✅ done | 15 negative fixtures reproduce the reference's exact code multiset |
-| `script` references / expansion / type checks / node graph | `piranha/src/ir_*.cpp`, `node_graph.cpp` | ⬜ | — |
-| `scripting/` bindings (`EngineContext` → `Engine`) | `scripting/` | ⬜ | — |
-| `engine-sim-cli` (a script run without the application) | `EngineSimApplication`'s frame loop | ✅ done | `DRIVEN` gate + 8 tests |
+| `script` references / expansion / type checks / node graph | `piranha/src/ir_*.cpp`, `node_graph.cpp` | ✅ done | `GRAPH`, `VALUES`, `EXECUTE` gates |
+| `scripting/` bindings (`EngineContext` → `Engine`, vehicle, transmission) | `scripting/` | ✅ done | `RUN`, `DRIVEN`, `DRIVE` gates, 16 265 + 3 × ~800 000 checkpoints |
+| `engine-sim-cli` (a script run without the application) | `EngineSimApplication`'s frame loop | ✅ done | the same drive as `DRIVEN`, 7 tests |
 | app shell (window/render/UI/audio out) | `delta-studio` | ⬜ | — |
 
 **Verification result: the whole simulation core and the audio path are
@@ -106,7 +106,7 @@ two `es_script` classes whose value is a `GasSystem` calculation.
 ```bash
 cd rust
 cargo build --all-targets     # no warnings
-cargo test                    # 174 tests (core unit + gas + end-to-end + script + CLI + parity gates)
+cargo test                    # 179 tests (core unit + gas + end-to-end + script + CLI + parity gates)
 cargo test --release
 ./tools/parity/run_core_parity.sh 200000   # 8 964 002 bit-identical checkpoints
 ```
@@ -129,7 +129,7 @@ cargo build --release
 engine    Subaru EJ25
 layout    2 banks, 4 cylinders, 1 exhaust system(s), 1 intake(s)
 frames    327 frames, 120009 simulation steps (6.00 s of engine time at 60 fps)
-rpm       89 to 849 (final 757)
+rpm       89 to 6855 (final 6640)
 dyno      not engaged (--dyno <rpm> holds the engine and fills torque/power)
 audio     264620 samples (6.00 s at 44.1 kHz)
   wrote   /tmp/ej25.wav (264620 samples)
@@ -138,13 +138,14 @@ audio     264620 samples (6.00 s at 44.1 kHz)
 
 ```
 engine-sim-cli <script.mr> [--seconds s] [--fps n] [--wav path] [--csv path]
-               [--throttle 0..1] [--dyno rpm] [--gear n] [--starter s]
-               [--no-starter] [--no-ignition] [--search dir]... [--quiet]
+               [--throttle 0..1] [--dyno rpm] [--gear n] [--shift s]
+               [--clutch 0..1] [--starter s] [--no-starter] [--no-ignition]
+               [--search dir]... [--quiet]
 ```
 
 The wave file is 44.1 kHz, 16-bit, mono — what the synthesizer produces — and the
-CSV is one row per application frame: `frame,time_s,rpm,crank_rad_s,throttle,
-dyno_torque_nm,dyno_power_w,exhaust_pa,chamber0_pa,audio_samples`.
+CSV is one row per application frame: `frame,time_s,rpm,vehicle_kmh,crank_rad_s,
+throttle,dyno_torque_nm,dyno_power_w,exhaust_pa,chamber0_pa,audio_samples`.
 
 Four things it does that are worth knowing, because they are the application's
 behaviour rather than the engine's:
@@ -159,16 +160,27 @@ behaviour rather than the engine's:
   module is built disabled and the application's `A` key is what enables it. Run
   with `--no-ignition` and the engine compresses and dies, which is what the
   original does too.
-* **The driveline's clutch is disengaged**, as the application starts it
-  (`Transmission` begins at zero clutch pressure), so the engine turns against
-  its own inertia. `--gear` changes the ratio the transmission reports and the
-  rotating mass' inertia; it cannot move the car.
+* **The car is the script's own**, with the application's 1597 kg / six-speed
+  pair only where the script published none — `loadScript` falls back per
+  *object*, so a script may bring one and not the other. Every engine under
+  `assets/engines/` brings both, and `assets/main.mr` brings the Impreza its
+  engine was recorded from (2700 lb, six ratios from 3.636 to 0.756), so
+  `--gear`, `--shift` and `vehicle_kmh` are about a real driveline.
+* **The clutch is engaged but the gearbox starts in neutral**, which is why
+  nothing moves until `--gear` says so: `Transmission` begins at zero clutch
+  pressure, and in neutral its limits are zero anyway. `--gear` alone engages at
+  frame zero, which stalls the engine on the starter; `--shift 2` is the same
+  shift made once the engine is running, and the car pulls away.
 
 `--dyno <rpm>` holds the crankshaft at that speed, the way the application's dyno
-does, and is the way to read torque: at 3000 rpm and wide-open throttle the
-Subaru EJ25 produces 240 Nm / 75 kW. The dynamometer's torque is the
-constraint's *reaction*, so the API reports it negative while the engine drives
-it; the summary negates it, the CSV keeps the raw value.
+does. The dynamometer's torque is the constraint's *reaction*, so the API reports
+it negative while the engine drives it; the summary negates it, the CSV keeps the
+raw value — and, because it is a reaction, it is also large and *positive* when a
+dead engine is being dragged. Held at 3000 rpm, the Subaru EJ25 needs 240 Nm to
+turn with the throttle shut and supplies 30 Nm (39 kW at the peak of the
+transient) when it fires wide open. Read the trace, not one number: the free
+engine, wide open from the starter, runs up to 6855 rpm — its redline — in six
+seconds.
 
 ## Parity harnesses (the important part)
 
@@ -312,6 +324,23 @@ have been subtly (or grossly) wrong with no test noticing:
    cannot be compared at all, and it is not reproducible between two runs of
    the *original* either.
 
+### `setSpeedControl` is inverted from the plate, and both drivers had it backwards
+
+`DirectThrottleLinkage::update` turns the speed control into a plate position with
+`position = 1 - control^gamma`, and `Intake` measures its flow with
+`cos(position * pi/2)` — so **a control of one is wide open and a position of zero
+is wide open**, and the application's `Q`/`W`/`E`/`R` keys (0.01, 0.1, 0.2, 1.0)
+are an opening throttle in that order. Both `.mr` drivers assumed the opposite
+and passed `1 - throttle` to `setSpeedControl`, which made every "wide-open" run
+a nearly shut one: the EJ25 "revved" to 790 rpm, chamber peaks were 16 bar, and a
+dyno pulled it round at 240 Nm. Nothing caught it because the port and the oracle
+were wrong in the same way — the gate compares them to each other. It surfaced
+only when the drivetrain milestone asked the engine to move a car.
+
+With the sense corrected, wide open from the starter takes the EJ25 to 6855 rpm,
+and the `DRIVEN` gate now runs an engine that is genuinely at wide-open throttle
+rather than one that is coasting.
+
 ### Every `.mr` gate was cranking, never running
 
 `IgnitionModule` is constructed with `m_enabled = false` and nothing enables it
@@ -319,10 +348,9 @@ except the application's `A` key. Both `.mr` harnesses inherited that, so for
 every trace in `run_script_parity.sh` the engine turned over and never fired —
 400 frames of a starter motor, bit-exact in every field, and blind to the whole
 combustion path of the script-built engine. It only mattered when the CLI tried
-to run an engine for real: `engine-sim-cli assets/main.mr --throttle 1` idled at
-the starter's speed and then stopped, because no cylinder had ever lit. The fix
-is one line in the driver, and the `DRIVEN` gate is the test that would have
-caught it.
+to run an engine for real: it sat at the starter's speed and then stopped,
+because no cylinder had ever lit. The fix is one line in the driver, and the
+`DRIVEN` gate is the test that would have caught it.
 
 ### The dyno hold stalls this fixture (in the original, too)
 
@@ -358,45 +386,43 @@ The port reproduces all of it operation for operation, including:
 Rendering is driven explicitly (`Simulator::render_audio_block`) instead of on
 the reference's audio thread, so PCM output is reproducible.
 
-## Next steps
+## Where the port stands
 
-1. **Script interpreter** for `.mr` (`scripting/` + `piranha`). The front end is
-   done (see the next section); what remains is everything that happens *after*
-   the parser:
+The `.mr` pipeline is complete — front end, resolution, validation, node graph and
+execution, the `scripting/` bindings (engine, vehicle and transmission), the wave
+impulse responses, and a command line that runs a script without the application.
+What is left is the app shell.
 
-   * **M2 — resolution and validation.** Types, default values, visibility,
-     aliasing, `inline`, `=>` shadowing. The oracle already runs these stages on
-     the Rust IR (`script_reference --check`), so this milestone can be checked
-     stage by stage rather than only at the end. The substrate is done
-     (`src/lower.rs`: parse tree → identity-preserving arena, because piranha
-     resolves in place and compares structures by identity; see
-     `docs/mr-interpreter-plan.md` §8.3), as are `src/channel_type.rs` and
-     `src/error.rs`, and `src/name.rs` has the scope walk
-     (`resolveName`/`resolveLocalName`, including the rule that a node
-     definition resolves locally only and that a unit resolves its *nodes*, not
-     its definitions), and `src/context.rs` is `IrContextTree` (frame chains,
-     `isEqual`/`isOutside`/`hasParent`/`findContext`/`getMain`,
-     `resolveDefinition`). Next: `IrReferenceChain` + `getImmediateReference`
-     per structure, then `_checkTypes` and `_validate`.
-   * **M3 — node graph and execution** (`Node`, `NodeOutput`, `Channel`,
-     `NodeProgram`, allocator, the mutation log). The original executes nodes in
-     `NodeContainer` order and never calls `NodeProgram::optimize()` — the
-     application does not — so the order is just insertion order, but every
-     `_evaluate` side effect has to match.
-   * **M4 — the `scripting/` bindings** (~2 500 lines, the largest chunk):
-     `EngineContext`, `EngineNode::buildEngine`, every `*_node.h`, and the
-     `actions.h` entry points. Gate: `script_reference --run` against the
-     recorded `crates/engine-sim-script/fixtures/main_engine.trace`, then the
-     same for every engine asset, which retires the hand-written TRX520 fixture.
-   * **M5 — the `.wav` impulse responses** in `es/sound-library/`: done.
-     `src/wav.rs` is `ysWindowsAudioWaveFile`'s parse (chunks, block alignment,
-     `dataSize / blockAlign` frames) and `src/paths.rs` is the filename rule
-     `ImpulseResponseNode::generate` applies; `build` returns the responses beside
-     the engine and `simulator` installs them, so the trace's audio is a
-     convolution over the real samples. Gated by `run_script_parity.sh`'s `WAVE`
-     (both decoders, all ten files, hash over every sample).
-2. **App shell** (window, render, UI, audio output) last; it is where the port
-   can finally diverge from the C++ without losing fidelity.
+* **M2 — resolution and validation.** Types, default values, visibility,
+  aliasing, `inline`, `=>` shadowing — gated by
+  `fixtures/{es_engine_sim,assets_main}.resolved` (660/660 and 701/701 rows). The
+  substrate is `src/lower.rs` (parse tree → identity-preserving arena, because
+  piranha resolves in place and compares structures by identity; see
+  `docs/mr-interpreter-plan.md` §8.3), with `src/channel_type.rs`,
+  `src/error.rs` and `src/context.rs` (`IrContextTree`).
+* **M3 — node graph and execution** (`Node`, `NodeOutput`, `Channel`,
+  `NodeProgram`, allocator, the mutation log). The original executes nodes in
+  `NodeContainer` order and never calls `NodeProgram::optimize()` — the
+  application does not — so the order is insertion order, and every `_evaluate`
+  side effect matches. Gated by `GRAPH`, `VALUES` and `EXECUTE`.
+* **M4 — the `scripting/` bindings**: `EngineContext`, `EngineNode::buildEngine`,
+  every `*_node.h`, and the `actions.h` entry points. Gated by `script_reference
+  --run`/`--engine` against the recorded
+  `crates/engine-sim-script/fixtures/main_engine.trace`, by `DRIVEN` for a
+  running engine, and by `DRIVE` for the drivetrain — the vehicle and the
+  transmission the script publishes, built by `build::simulator` on the same
+  per-object fallback rule as `EngineSimApplication::loadScript`. That was the
+  last gap in M4 (`docs/mr-interpreter-plan.md` §9).
+* **M5 — the `.wav` impulse responses** in `es/sound-library/`. `src/wav.rs` is
+  `ysWindowsAudioWaveFile`'s parse (chunks, block alignment, `dataSize /
+  blockAlign` frames) and `src/paths.rs` is the filename rule
+  `ImpulseResponseNode::generate` applies; `build` returns the responses beside
+  the engine and `simulator` installs them, so the trace's audio is a
+  convolution over the real samples. Gated by `WAVE`.
+* **M6 — the command line**, `crates/engine-sim-cli`: a script in, a wave file and
+  a CSV out, with the application's own keys as flags.
+* **App shell** (window, render, UI, audio output) last; it is where the port can
+  finally diverge from the C++ without losing fidelity.
 
 ## The `.mr` IR substrate
 
@@ -462,9 +488,12 @@ Three things made that possible:
 The gate (`run_script_parity.sh`) currently reports:
 
 ```
--- 58 files round-tripped and validated, 0 mismatches
+-- 80 files round-tripped and validated, 0 mismatches
 PASS: 16265 engine/trace checkpoints match the recorded fixture
 PASS: 808301 checkpoints of a running engine are identical
+PASS: 764159 checkpoints, .../engines_atg-video-1_01_honda_trx520.mr
+PASS: 808301 checkpoints, .../vehicle_without_transmission.mr
+PASS: 808301 checkpoints, .../drivetrain_from_application.mr
 ```
 
 The second line is the interesting one: the oracle resolves, validates, builds
@@ -480,16 +509,29 @@ application does before `S` and `A` are pressed. Nothing in them fires, so
 nothing in them could catch a difference in combustion or in the spark's timing.
 `DRIVEN` presses the keys — ignition on, starter held for a second and released,
 throttle wide open — and runs **20 000 frames instead of 400**: two seconds of an
-engine that is running, 1 740 of them with a lit cylinder and chamber peaks
-around 17 bar. All 808 301 checkpoints match. The harness takes the same `PARITY_*`
-environment variables as the port's example (`PARITY_THROTTLE`,
-`PARITY_STARTER_SECONDS`, `PARITY_IGNITION`, `PARITY_DYNO_RPM`), so any driven
-scenario can be compared by hand:
+engine that is running. All 808 301 checkpoints match. The harness takes the same
+`PARITY_*` environment variables as the port's example (`PARITY_THROTTLE`,
+`PARITY_STARTER_SECONDS`, `PARITY_IGNITION`, `PARITY_DYNO_RPM`, `PARITY_CLUTCH`,
+`PARITY_GEAR`), so any driven scenario can be compared by hand:
 
 ```bash
 PARITY_STEPS=20000 PARITY_THROTTLE=1 PARITY_STARTER_SECONDS=1 PARITY_IGNITION=1 \
     ./tools/parity/run_script_parity.sh       # (the gate does exactly this)
 ```
+
+`DRIVE` is the third layer and the newest: the drivetrain. `assets/main.mr`
+publishes a car and a gearbox, so from M4 onwards the gates were driving whatever
+`loadScript` chose — and every one of them drove it in **neutral**, where a
+transmission's ratios do nothing and a vehicle's mass only sets a drag. `DRIVE`
+puts three fixtures under `tools/parity/engines/` in first gear with the clutch
+out: one that publishes both (the TRX520's 500 kg and five ratios), one that
+publishes only a car (a 900 kg body in front of the application's gearbox), and
+one that publishes neither (the EJ25's engine with the application's 1597 kg /
+six-speed pair). Each combination of `loadScript`'s two fallbacks is therefore
+compared rather than assumed, and it is the only place the gear ratios are
+compared at all: `Transmission` and `TransmissionNode` keep theirs protected, so
+neither dumper can print them — a wrong ratio moves the engine instead. The three
+runs are 20 000 frames each and all of them are bit-identical.
 
 Four MSVC-isms had to be patched in the staged copy of piranha/scripting (never
 in the submodule), none of which change arithmetic:

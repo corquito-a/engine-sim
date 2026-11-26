@@ -26,11 +26,15 @@
 //! * **The ignition is on by default.** `IgnitionModule` is built disabled -- the
 //!   application's `A` key is what enables it -- so a script run without it builds
 //!   an engine that compresses and never fires. `--no-ignition` is the old shape.
-//! * **The driveline's clutch is disengaged**, which is how both the application
-//!   and the reference harness start: `Transmission` begins at zero clutch
-//!   pressure, so the engine turns against its own inertia and the vehicle behind
-//!   it does not move. `--gear` only changes the gear the transmission reports (and
-//!   so the rotating mass' inertia) until something presses the clutch.
+//! * **The script's own vehicle and transmission are what the car is**, with the
+//!   application's 1597 kg / six-speed pair only where the script published none
+//!   (`EngineSimApplication::loadScript`). Every engine under `assets/engines/`
+//!   publishes both.
+//!
+//! The driveline's clutch is engaged (`--clutch`, default 1) because that is the
+//! application's resting state, but the transmission starts in neutral, so
+//! `--gear` is what actually couples the engine to the car -- and in neutral the
+//! clutch's limits are zero anyway.
 //!
 //! A script that only *defines* an engine -- most of `assets/engines/` -- needs a
 //! two-line wrapper before it can run, exactly as the parity harness uses:
@@ -56,9 +60,11 @@ usage: engine-sim-cli <script.mr> [options]
   --fps <n>          application frames per second      (default 60)
   --wav <path>       write the rendered audio: 44.1 kHz, 16-bit, mono
   --csv <path>       write one row of telemetry per frame
-  --throttle <0..1>  throttle position                  (default 0)
+  --throttle <0..1>  throttle, 0 closed, 1 wide open      (default 0)
   --dyno <rpm>       hold the engine at <rpm> on the dynamometer
   --gear <n>         transmission gear, 1-based, 0 for neutral
+  --shift <s>        select the gear after <s> seconds       (default 0)
+  --clutch <0..1>    clutch pressure                        (default 1)
   --starter <s>      hold the starter for <s> seconds   (default 1)
   --no-starter       do not spin the starter at all
   --no-ignition      leave the ignition disabled (the engine will not fire)
@@ -95,6 +101,8 @@ struct Options {
     throttle: f64,
     dyno: Option<f64>,
     gear: Option<usize>,
+    shift_seconds: f64,
+    clutch: f64,
     starter_seconds: f64,
     ignition: bool,
     search: Vec<String>,
@@ -112,6 +120,8 @@ impl Default for Options {
             throttle: 0.0,
             dyno: None,
             gear: None,
+            shift_seconds: 0.0,
+            clutch: 1.0,
             starter_seconds: 1.0,
             ignition: true,
             search: vec![
@@ -165,6 +175,8 @@ impl Options {
 
                     options.gear = Some(gear as usize);
                 }
+                "--clutch" => options.clutch = number(&value()?, "--clutch")?,
+                "--shift" => options.shift_seconds = number(&value()?, "--shift")?,
                 "--starter" => options.starter_seconds = number(&value()?, "--starter")?,
                 "--no-starter" => options.starter_seconds = 0.0,
                 "--no-ignition" => options.ignition = false,
@@ -203,6 +215,14 @@ impl Options {
 
         if !(0.0..=1.0).contains(&options.throttle) {
             return Err(format!("--throttle is a position from 0 to 1, not {}", options.throttle));
+        }
+
+        if !(0.0..=1.0).contains(&options.clutch) {
+            return Err(format!("--clutch is a pressure from 0 to 1, not {}", options.clutch));
+        }
+
+        if options.shift_seconds < 0.0 {
+            return Err("--shift cannot be negative".to_string());
         }
 
         if options.starter_seconds < 0.0 {
@@ -267,22 +287,23 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
         if gear > gears {
             return Err(format!("--gear is 0 to {}, not {}", gears, gear));
         }
-
-        // `change_gear(-1)` is neutral; the command line counts gears from one.
-        simulator.change_gear(gear as i32 - 1);
     }
+
+    // The application sets the clutch pressure every frame, ramping to one within
+    // a millisecond unless the clutch key is held, so an engaged clutch is its
+    // resting state; the transmission itself starts at zero. In neutral the clutch
+    // limits are zero anyway, which is why `--gear` is what makes it matter.
+    simulator.set_clutch_pressure(options.clutch);
 
     // The application drives the throttle through its *speed control*: the keys
     // set a speed setting and the engine's linkage turns that into a plate
-    // position (`position = 1 - speed_control^gamma`), which is why the original's
-    // keys are inverted -- 0 is wide open. `--throttle` is a plate position, so
-    // the control is `1 - position`: exact at both ends, and the linkage's own
-    // curve in between. An engine whose script wired no linkage keeps the position
-    // outright, since a plain throttle ignores speed control.
-    simulator
-        .engine
-        .set_speed_control(1.0 - options.throttle);
-    simulator.engine.set_throttle(options.throttle);
+    // position (`position = 1 - control^gamma`), so a control of one is wide open
+    // -- the same sense `--throttle` has, and the reason a run reproduces the
+    // application's user by setting the control alone. The plate is set as well,
+    // the complement of the control, because a script can wire a plain throttle
+    // that ignores the control, and then the position is the only channel.
+    simulator.engine.set_speed_control(options.throttle);
+    simulator.engine.set_throttle(1.0 - options.throttle);
 
     let run = simulate(&mut simulator, &options);
 
@@ -292,15 +313,16 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
 
     if let Some(path) = &options.csv {
         let mut csv = String::from(
-            "frame,time_s,rpm,crank_rad_s,throttle,dyno_torque_nm,dyno_power_w,exhaust_pa,chamber0_pa,audio_samples\n",
+            "frame,time_s,rpm,vehicle_kmh,crank_rad_s,throttle,dyno_torque_nm,dyno_power_w,exhaust_pa,chamber0_pa,audio_samples\n",
         );
 
         for row in &run.rows {
             csv.push_str(&format!(
-                "{},{:.6},{:.3},{:.6},{:.4},{:.4},{:.3},{:.3},{:.3},{}\n",
+                "{},{:.6},{:.3},{:.3},{:.6},{:.4},{:.4},{:.3},{:.3},{:.3},{}\n",
                 row.frame,
                 row.time,
                 row.rpm,
+                row.vehicle_speed,
                 row.crank_speed,
                 row.throttle,
                 row.torque,
@@ -336,6 +358,7 @@ struct Row {
     frame: usize,
     time: f64,
     rpm: f64,
+    vehicle_speed: f64,
     crank_speed: f64,
     throttle: f64,
     torque: f64,
@@ -381,6 +404,14 @@ fn simulate(simulator: &mut Simulator, options: &Options) -> Run {
     let mut frame = 0;
     let mut starting = options.starter_seconds > 0.0;
 
+    // `--shift 0` engages before the first frame; a later shift waits for the
+    // engine's own clock, which is not the frame count.
+    let mut gear = if options.shift_seconds <= 0.0 {
+        options.gear
+    } else {
+        None
+    };
+
     while run.audio.len() < target_samples {
         if frame >= max_frames {
             break;
@@ -389,6 +420,19 @@ fn simulate(simulator: &mut Simulator, options: &Options) -> Run {
         if starting && run.engine_time >= options.starter_seconds {
             simulator.set_starter_enabled(false);
             starting = false;
+        }
+
+        // The gear is selected once, when the driver says so. A gear engaged from
+        // the first frame leaves the starter turning the whole car, which is why
+        // the application's user starts in neutral and shifts after the engine is
+        // running; `--shift` is that wait.
+        if gear.is_none() && run.engine_time >= options.shift_seconds {
+            gear = options.gear;
+        }
+
+        if let Some(gear) = gear.take() {
+            // `change_gear(-1)` is neutral; the command line counts gears from one.
+            simulator.change_gear(gear as i32 - 1);
         }
 
         simulator.start_frame(frame_time);
@@ -408,6 +452,7 @@ fn simulate(simulator: &mut Simulator, options: &Options) -> Run {
             frame,
             time: run.engine_time,
             rpm: simulator.engine.get_rpm(&simulator.solver.bodies),
+            vehicle_speed: simulator.vehicle.get_speed(&simulator.solver.bodies) * 3.6,
             crank_speed: simulator.engine.get_speed(&simulator.solver.bodies),
             throttle: simulator.engine.get_throttle(),
             torque: simulator.get_filtered_dyno_torque(),

@@ -23,7 +23,7 @@
 use crate::graph::{class_name, Graph, NodeClass};
 use crate::objects::{
     ApplicationSettings, CrankData, CylinderRefs, EngineContext, PistonData, RodData,
-    RodJournalData, VehicleData,
+    RodJournalData, TransmissionData, VehicleData,
 };
 use crate::values::Value;
 
@@ -352,6 +352,60 @@ impl Program {
                         rolling_resistance: self.number(node, "rolling_resistance").unwrap_or(0.0),
                     },
                 );
+
+                Ok(())
+            }
+
+            // `TransmissionNode::_evaluate`: one number. The ratios arrive later,
+            // one per `add_gear`.
+            "transmission" => {
+                let previous = self
+                    .context
+                    .transmission(node)
+                    .cloned()
+                    .unwrap_or_default();
+
+                self.context.set_transmission(
+                    node,
+                    TransmissionData {
+                        max_clutch_torque: self
+                            .number(node, "max_clutch_torque")
+                            .unwrap_or(previous.max_clutch_torque),
+                        gear_ratios: previous.gear_ratios,
+                    },
+                );
+
+                Ok(())
+            }
+
+            // `AddGearNode::_evaluate`: `readAllInputs` then `addGear` on the
+            // transmission the input names, in evaluation order.
+            "add_gear" => {
+                if let (Some(ratio), Some(target)) = (
+                    self.number(node, "ratio"),
+                    self.object_source(node, "transmission"),
+                ) {
+                    self.context.add_gear(target, ratio);
+                }
+
+                Ok(())
+            }
+
+            // `SetVehicleNode::_evaluate`: the application drives the vehicle the
+            // script published, not the one it falls back to.
+            "set_vehicle" => {
+                if let Some(target) = self.object_source(node, "vehicle") {
+                    self.context.select_vehicle(target);
+                }
+
+                Ok(())
+            }
+
+            // `SetTransmissionNode::_evaluate`, the same way.
+            "set_transmission" => {
+                if let Some(target) = self.object_source(node, "transmission") {
+                    self.context.select_transmission(target);
+                }
 
                 Ok(())
             }

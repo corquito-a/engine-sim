@@ -214,6 +214,11 @@ struct TraceOptions {
     double starter_seconds = -1.0;
     double dyno_rpm = -1.0;
     int ignition = -1;
+    double clutch = -1.0;
+
+    /// Gear, counted the way the command line counts: 1 is first, 0 is neutral.
+    /// `-1` leaves the transmission in the neutral it starts in.
+    int gear = -1;
 };
 
 /// Runs `steps` application frames, emitting the physics, the synthesizer input
@@ -234,8 +239,16 @@ static void traceFrames(
     const double timestep = simulator->getTimestep();
 
     for (int step = 0; step < stepCount; ++step) {
+        if (step == 0 && options.gear >= 0) {
+            simulator->getTransmission()->changeGear(options.gear - 1);
+        }
+
         if (options.throttle >= 0.0) {
-            engine->setSpeedControl(1.0 - options.throttle);
+            engine->setSpeedControl(options.throttle);
+        }
+
+        if (options.clutch >= 0.0) {
+            simulator->getTransmission()->setClutchPressure(options.clutch);
         }
 
         if (options.ignition >= 0) {

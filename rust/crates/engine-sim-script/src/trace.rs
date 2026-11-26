@@ -36,21 +36,44 @@ pub struct Drive {
 
     /// Dyno hold speed in rpm. A held dyno takes the place of the starter.
     pub dyno_rpm: Option<f64>,
+
+    /// Transmission clutch pressure, 0 (depressed) to 1 (engaged). The
+    /// transmission starts at zero, so without this the drivetrain is inert.
+    pub clutch: Option<f64>,
+
+    /// Gear to select, counted the way the command line counts: 1 is first, 0 is
+    /// neutral. It is selected once, by [`Drive::engage`].
+    pub gear: Option<i32>,
 }
 
 impl Drive {
+    /// The part of the drive that happens once, before the first frame: the gear
+    /// the driver selected. The transmission starts in neutral, so nothing moves
+    /// until this runs.
+    pub fn engage(&self, sim: &mut Simulator) {
+        if let Some(gear) = self.gear {
+            sim.change_gear(gear - 1);
+        }
+    }
+
     /// Applies this frame's part of the drive, before the frame is stepped.
     fn apply(&self, sim: &mut Simulator, time: f64) {
         if let Some(throttle) = self.throttle {
-            // Only the speed control: the engine's linkage turns it into a plate
-            // position (and the reference harness does exactly this much).
-            sim.engine.set_speed_control(1.0 - throttle);
+            // Only the speed control, which is the channel the application's keys
+            // drive: the engine's linkage turns it into a plate position
+            // (`1 - control^gamma`), so a control of one is wide open. The
+            // reference harness does exactly this much.
+            sim.engine.set_speed_control(throttle);
         }
 
         if let Some(seconds) = self.starter_seconds {
             if time >= seconds {
                 sim.set_starter_enabled(false);
             }
+        }
+
+        if let Some(pressure) = self.clutch {
+            sim.set_clutch_pressure(pressure);
         }
 
         if let Some(rpm) = self.dyno_rpm {
@@ -72,6 +95,8 @@ pub fn frames(sim: &mut Simulator, steps: usize) -> String {
 pub fn frames_driven(sim: &mut Simulator, steps: usize, drive: &Drive) -> String {
     let mut out = String::new();
     let timestep = sim.get_timestep();
+
+    drive.engage(sim);
 
     for step in 0..steps {
         if let Some(ignition) = drive.ignition {

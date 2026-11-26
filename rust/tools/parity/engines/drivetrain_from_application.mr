@@ -1,0 +1,13 @@
+// An engine from an asset, built without the asset's own `main`: no vehicle and
+// no transmission are published, so both sides have to fall back to the
+// application's pair exactly as `EngineSimApplication::loadScript` does. The
+// wrapper beside this file is the other branch, where the script publishes a
+// vehicle and a transmission and they have to be used instead.
+import "engine_sim.mr"
+import "../../../../assets/engines/atg-video-2/01_subaru_ej25_eh.mr" as ej25
+
+public node start {
+    set_engine(ej25::subaru_ej25())
+}
+
+start()
