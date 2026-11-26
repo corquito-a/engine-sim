@@ -88,5 +88,5 @@ fn every_execute_fixture_writes_what_the_reference_writes() {
         checked += 1;
     }
 
-    assert_eq!(checked, 2, "every execute fixture is checked");
+    assert_eq!(checked, 3, "every execute fixture is checked");
 }

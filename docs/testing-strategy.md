@@ -1219,6 +1219,7 @@ output references.
 |---|---|
 | `execute/prints.mr` | five `console_out` instances in order, their arguments built from literals, `string_add` and the conversions — the text is the reference's, character for character |
 | `execute/throws.mr` | `throw_runtime_error` in the middle: what was written before it stays written, what comes after never runs, and the run fails with `Planned error` |
+| `execute/groups.mr` | two node groups with `console_out`s inside them: each runs in place and in order (`before (group) middle (group 2) after`), and both run although nothing references their outputs |
 
 Recordings carry both halves, `status: ok` (or the error) on the first line and
 the raw text after `----`, because "the run failed" is as much a result as the
@@ -1267,19 +1268,21 @@ journal array is gone.
 `cylinder_bank` and the two journal actions are the first *structure* the gate
 sees: a bank's cylinder list and head, and a crankshaft's journals with their
 angles. Those records are node ids, so the comparison is about **which object
-reached which list, and in what order** — and that is what exposed the last
-ordering rule. A container whose owning node nothing evaluates has to run, and it
-has to run **last-first**: a dependency in this graph points forward (a bank's
-`add_cylinder` input depends on a container built after it), so descending id is
-a topological order of the dependency forest. Ascending order gave every bank its
-cylinders reversed and every crankshaft its journal angles pairwise swapped —
-values that are individually right and collectively wrong.
+reached which list, and in what order**.
 
-Two things the gate caught earlier, neither visible from the graph alone: `NodeContainer::_
-evaluate` runs the nodes of the container a node owns (a container whose owning
-node nothing evaluates still has to run, or the 65 `add_sample` actions inside
-`assets/main.mr`'s engine never fire — the walk now runs those containers after
-the top level), and two of those curves are not made of `add_sample` at all:
+That is what exposed the ordering rule, and it took two tries to get right. A
+**container node is the container it owns** — `aContainerNode.nodes` are the
+nodes inside it, and running the node runs them (`NodeContainer::_evaluate`) —
+so a group's nodes run wherever the group's node sits in its parent's node list.
+An earlier version instead ran "containers nothing had reached" in a second pass
+with their order reversed, which matched all 40 scripts and was still wrong: it
+put a group's side effects after the top level instead of in place. The fixture
+`execute/groups.mr` pins the difference — `before (group) after`, not
+`before after (group)` — and with the rule fixed the second pass, and the
+reversal, both disappeared.
+
+Two things the gate caught earlier, neither visible from the graph alone: two of
+those curves are not made of `add_sample` at all:
 `generate_harmonic_cam_lobe` *writes* its samples and overrides the node's filter
 radius, which is why the filter radius can't simply be read off the input.
 

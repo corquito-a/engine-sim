@@ -368,6 +368,11 @@ fn main() {
             // own block dumps it.
         }
 
+        if let Some(error) = program.runtime_error() {
+            eprintln!("runtime error: {}", error);
+            std::process::exit(1);
+        }
+
         return;
     }
 

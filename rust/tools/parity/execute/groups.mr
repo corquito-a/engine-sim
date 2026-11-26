@@ -1,0 +1,31 @@
+// A node group is a container, and a container node *is* the container it owns:
+// running the group's node runs its nodes, in the order the group's node sits in
+// the top level. Two things follow, and this fixture pins both:
+//
+//  * the group's text comes *between* the two `console_out`s around it, not
+//    after them (a walk that ran unreached containers last would print "before
+//     after group"); and
+//  * each group runs at all even though nothing references it -- no port of
+//    `g` or `g2` is wired to anything -- and in that order, so a walk that ran
+//    every group after the top level (or in reverse) prints a different line.
+node string_channel => __piranha__string {}
+node string_literal => __piranha__literal_string {
+    alias output __out [string_channel];
+}
+node console_out => __piranha__console_out {
+    input data [string_channel];
+}
+
+private node Group {
+    console_out inner(data: "(group)")
+}
+
+private node SecondGroup {
+    console_out inner(data: "(group 2)")
+}
+
+console_out first(data: "before ")
+Group g()
+console_out middle(data: " middle ")
+SecondGroup g2()
+console_out last(data: " after")
