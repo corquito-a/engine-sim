@@ -556,6 +556,31 @@ impl Program {
                 Ok(())
             }
 
+            // `ImpulseResponseNode`: the one `es_script` class that reads the
+            // filesystem, and it reads it late -- `generate` resolves the
+            // filename against the directory of the unit that wrote the node.
+            "impulse_response" => {
+                let mut response = crate::objects::ImpulseResponseData::default();
+
+                if let Some(filename) = self.text(node, "filename") {
+                    let unit_path = self
+                        .graph
+                        .nodes
+                        .get(node)
+                        .and_then(|node| node.unit_path.as_deref());
+
+                    response.filename = crate::paths::resolve(unit_path, &filename);
+                }
+
+                if let Some(volume) = self.number(node, "volume") {
+                    response.volume = volume;
+                }
+
+                self.context.set_impulse_response(node, response);
+
+                Ok(())
+            }
+
             // `CylinderHeadNode::_evaluate` reads its inputs and then clears the
             // four object pointers, so only the numbers survive on the node.
             "cylinder_head" => {

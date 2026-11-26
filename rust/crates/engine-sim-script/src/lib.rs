@@ -33,6 +33,7 @@ pub mod lower;
 pub mod name;
 pub mod parser;
 pub mod objects;
+pub mod paths;
 pub mod program;
 pub mod reference;
 pub mod resolve;
@@ -40,6 +41,7 @@ pub mod resolved;
 pub mod trace;
 pub mod types;
 pub mod validate;
+pub mod wav;
 pub mod values;
 
 pub use channel_type::{ChannelType, ChannelTypeRegistry};

@@ -13,7 +13,7 @@
 #   RUN    `assets/main.mr` is built and simulated twice: through the original
 #          resolve/validate/build/execute/generate pipeline, and through the
 #          port's own front end into the port's own `engine-sim-core` engine.
-#          Both print the 97-line engine header and 16 166 per-frame checkpoints
+#          Both print the 98-line engine header and 16 166 per-frame checkpoints
 #          of physics, gas dynamics, synthesizer input and rendered audio, and
 #          all of it has to match -- the reference against the recorded fixture,
 #          and the port against the reference.
@@ -33,6 +33,11 @@
 #   OBJECTS `--objects` and `--settings` on every script in `assets/`: the objects
 #          the data nodes generate and the application settings the script
 #          writes, byte for byte. This is the gate that reaches M4.
+#
+#   WAVE   every `.wav` in `es/sound-library/`: the port's RIFF decoder against
+#          `ysWindowsAudioWaveFile`'s parse -- channels, rate, bits, frame count,
+#          and an FNV-1a hash over every decoded sample. This is what the audio in
+#          the traces below actually runs on.
 #
 #   ENGINES every engine under `assets/engines/` that builds one, through
 #          `tools/parity/engines/` wrappers: the port's engine against the
@@ -178,9 +183,9 @@ echo "== gate RUN: build and simulate assets/main.mr, both sides =="
 "$IR_DUMP" assets/main.mr > "$WORK/main.ir"
 
 # The point of the port: the script's engine, built by the port's own front end
-# and simulated by the port's own `engine-sim-core`. It prints the same 97-line
+# and simulated by the port's own `engine-sim-core`. It prints the same 98-line
 # header and the same per-frame fields as the reference -- physics, gas dynamics,
-# synthesizer input and rendered audio -- so the whole 16 263-line trace is one
+# synthesizer input and rendered audio -- so the whole 16 265-line trace is one
 # diff.
 "$SCRIPT_TRACE" assets/main.mr > "$WORK/main.port.trace" 2> "$WORK/main.port.err" \
     || { echo "FAIL: the port could not run assets/main.mr"; head -20 "$WORK/main.port.err"; exit 1; }
@@ -284,6 +289,37 @@ if ! diff -q "$WORK/engine.ref" "$HERE/engine/main.engine" > /dev/null; then
     exit 1
 fi
 echo "PASS: $(( $(wc -l < "$WORK/engine.ref") )) engine header lines identical, and the recorded fixture still holds"
+
+# The audio the traces run on: the impulse responses, decoded both sides.
+echo "== gate WAVE: the impulse responses =="
+if [ ! -x "$RUST_DIR/target/release/examples/wave_dump" ]; then
+    (cd "$RUST_DIR" && cargo build --release --example wave_dump >/dev/null)
+fi
+WAVE_DUMP="$RUST_DIR/target/release/examples/wave_dump"
+
+wave_failures=0
+wave_files=0
+while IFS= read -r wave; do
+    wave_files=$((wave_files + 1))
+
+    "$WORK/script_reference" --wave "$wave" > "$WORK/wave.ref" 2> "$WORK/wave.err" \
+        || { echo "FAIL: the reference could not read $wave"; wave_failures=$((wave_failures + 1)); continue; }
+
+    "$WAVE_DUMP" "$wave" > "$WORK/wave.port" 2> "$WORK/wave.port.err" \
+        || { echo "FAIL: the port could not read $wave: $(head -2 "$WORK/wave.port.err")"; wave_failures=$((wave_failures + 1)); continue; }
+
+    if ! diff -q "$WORK/wave.ref" "$WORK/wave.port" > /dev/null; then
+        echo "FAIL: $wave decodes differently"
+        diff "$WORK/wave.ref" "$WORK/wave.port" | head -5
+        wave_failures=$((wave_failures + 1))
+    fi
+done < <(find "$REPO_ROOT/es/sound-library" -name '*.wav' | sort)
+
+if [ "$wave_failures" -ne 0 ]; then
+    echo "FAIL: $wave_failures of $wave_files wave files differ"
+    exit 1
+fi
+echo "PASS: $wave_files impulse responses, every sample identical"
 
 # And the same trace for every engine in `assets/`. `assets/main.mr` only
 # configures one engine; these reach the parts it does not -- two exhaust

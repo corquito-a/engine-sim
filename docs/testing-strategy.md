@@ -1016,7 +1016,7 @@ constructor says the default token is.
 | gate | `MATCH 94, UNSPECIFIED 171`, `--strict` `DIFF 29` | `MATCH 94`, no exclusions |
 | `--strict` | kept the excluded errors | removed -- it no longer means anything |
 | negative fixtures | 20 | 21 (`literal_type_not_defined.mr`) |
-| `run_script_parity.sh` | `PASS: 16263` | `PASS: 16263` (no change) |
+| `run_script_parity.sh` | `PASS: 16263` | `PASS: 16265` (two header lines, one per exhaust) |
 
 The script-parity gate is the control: nothing in the engine's own scripts
 changed, because they define their literal builtins. Only a fixture that leaves
@@ -1234,7 +1234,7 @@ the ones that build `Piston`/`Crankshaft`/`CylinderBank` objects and hand them t
 first thing that can be compared is *the engine the script configured* rather
 than its behaviour, so `script_reference --engine` builds, initializes, executes
 and dumps the `E,...` header without stepping the simulation —
-`tools/parity/engine/main.engine` holds the 96 lines `assets/main.mr` produces
+`tools/parity/engine/main.engine` holds the 98 lines `assets/main.mr` produces
 (`E,name,Subaru EJ25`, the four counts, the fuel constants, every journal and
 cylinder parameter). `RECORD_ENGINE=1 ./run_script_parity.sh` re-records it, and
 the `ENGINE` gate compares the port's `graph_dump --engine` against both the live
@@ -1323,15 +1323,15 @@ them. `run_graph.py` and `tests/graph_tests.rs` enforce the graph,
 `run_graph.py --values` and `tests/value_tests.rs` the values,
 `run_graph.py --execute` and `tests/program_tests.rs` the runs, and
 `run_script_parity.sh` runs them as its `GRAPH`, `VALUES`, `OBJECTS`,
-`SETTINGS`, `ENGINE` and `EXECUTE` gates. The rest of the `es_script` classes —
+`SETTINGS`, `ENGINE`, `WAVE`, `ENGINES` and `EXECUTE` gates. The rest of the `es_script` classes —
 the part graph behind `engine`, which is what turns a run into a simulation — is
 M4, and is where the next section starts.
 
 ## The engine, and the twenty engines the one script could not reach
 
-`ENGINE` compared the 96 lines `buildEngine` *decides*; nothing yet simulated what
+`ENGINE` compared the 98 lines `buildEngine` *decides*; nothing yet simulated what
 the engine *does*. `RUN` closes that loop for `assets/main.mr`: both sides print
-the same 97-line header and 16 166 per-frame checkpoints of physics, gas dynamics,
+the same 98-line header and 16 166 per-frame checkpoints of physics, gas dynamics,
 synthesizer input and rendered audio, and both halves are gated — the original
 against the recorded fixture, the port's own engine against the original.
 
@@ -1370,3 +1370,56 @@ The gate is the sweep itself (`run_script_parity.sh`'s `ENGINES`): twenty engine
 one diff each, `PASS: 20 engines, every checkpoint identical to the original`. It
 costs about forty seconds and it is the only gate that reaches master-and-slave
 rods, a VTEC valvetrain, five-valve heads, twin exhausts and twelve cylinders.
+
+## The audio: what the script named, not what the harness invented
+
+Every gate above stopped one layer short of the sound. The exhaust convolution ran
+on a table this repository generated — 512 integer samples, identical on both
+sides — because the alternative was reading a file on one side and not the other.
+Every engine asset, meanwhile, *names* its impulse response
+(`impulse_response: ir_lib.minimal_muffling_02`), the library has ten of them, and
+the files are on disk in `es/sound-library/`.
+
+M5 closes that. Three pieces:
+
+- **The object.** `ImpulseResponseNode::generate` resolves the filename against
+  the directory of the unit that *wrote the node* and keeps the volume; every
+  engine's exhaust then carries it. The rule is `parent_path() / filename` on
+  `boost::filesystem::path`, so `paths.rs` is a lexical join — and the object
+  holds an **absolute** path, because the units are absolute (the loader hands the
+  parser resolved paths). That is why every dump prints the repository-relative
+  form instead: a fixture that pinned `/home/someone/engine-sim/...` would be
+  worth nothing, and it would fail on the next machine. `paths::display` strips
+  the deepest ancestor of the working directory that contains the path, so the
+  same string comes out whether the harness runs from the repository root or a
+  test runs from a crate directory inside it.
+- **The decoder.** `ysWindowsAudioWaveFile` is `mmio` against a RIFF file and
+  `Windows.h`, so neither side can use it. Both sides got a reader with the same
+  parse: walk the chunks from offset 12, take `bitsPerSample` from
+  `blockAlign / channels * 8` rather than the format chunk's own field, and take
+  the sample count as `dataSize / blockAlign` — which is **frames**, not samples.
+  That distinction is not pedantry: `EngineSimApplication` hands
+  `initializeImpulseResponse` an `int16_t *` and `GetSampleCount()`, so a stereo
+  file would be read interleaved. Every file here is mono 16-bit 44.1 kHz, so the
+  two agree, and the port does the same thing anyway.
+- **The install.** `build` returns the responses next to the engine
+  (`BuiltEngine`), because a file is not something an `Engine` can hold, and
+  `simulator` installs each one at its own volume — `Synthesizer::initializeImpulseResponse`
+  trims to the last sample above 100 and caps at 10 000, which the core port
+  already did. The deterministic table survives only as the fallback for an
+  exhaust that names nothing, which is what the hand-built core fixture uses.
+
+What that changes in the numbers: the header gains two lines per exhaust
+(`exhaust0_impulse_response` and its volume), so 96 becomes 98 and the trace 16 263
+→ 16 265 — and **1 376 `audio*` values move**, because they are now a convolution
+over 17 555 samples of a real exhaust recording instead of a synthetic table. The
+physics does not move at all: `in*` and every solver field are unchanged, which is
+the check that says the impulse response only ever reached the audio.
+
+The gate for the decoder is its own mode, `WAVE`: `script_reference --wave <file>`
+against `examples/wave_dump` on all ten files, comparing channels, rate, bits,
+frame count and an FNV-1a hash over every decoded sample — `PASS: 10 impulse
+responses, every sample identical`. The `OBJECTS` gate picks up the
+`impulse_response_filename`/`_volume` pair for each of the ten library nodes for
+free, since it already walks every data node, and `ENGINES` now exercises the real
+audio on all twenty engines.

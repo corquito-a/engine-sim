@@ -188,19 +188,40 @@ pub fn dump_with_displacement(program: &mut Program, displacement: f64) -> Vec<S
     }
 
     for (index, exhaust) in exhausts.iter().enumerate() {
-        let Some(exhaust) = program.context.exhaust(*exhaust) else {
+        let Some(data) = program.context.exhaust(*exhaust) else {
             continue;
         };
 
         for (field, value) in [
-            ("length", exhaust.length),
-            ("primary_tube_length", exhaust.primary_tube_length),
-            ("collector_area", exhaust.collector_cross_section_area),
-            ("velocity_decay", exhaust.velocity_decay),
-            ("audio_volume", exhaust.audio_volume),
+            ("length", data.length),
+            ("primary_tube_length", data.primary_tube_length),
+            ("collector_area", data.collector_cross_section_area),
+            ("velocity_decay", data.velocity_decay),
+            ("audio_volume", data.audio_volume),
         ] {
             lines.push(bits(&format!("exhaust{}_{}", index, field), value));
         }
+
+        // The response is the object `generate` makes, not a parameter of the
+        // exhaust, but it is the exhaust's in the engine and it is what decides
+        // the audio, so the header carries it: the resolved file, and the volume
+        // the samples are scaled by. An exhaust with no response keeps the
+        // object's defaults.
+        let response = data
+            .impulse_response
+            .and_then(|node| program.context.impulse_response(node))
+            .cloned()
+            .unwrap_or_default();
+
+        lines.push(format!(
+            "E,exhaust{}_impulse_response,{}",
+            index,
+            crate::paths::display(&response.filename)
+        ));
+        lines.push(bits(
+            &format!("exhaust{}_impulse_response_volume", index),
+            response.volume,
+        ));
     }
 
     lines

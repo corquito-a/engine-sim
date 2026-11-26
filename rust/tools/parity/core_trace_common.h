@@ -27,6 +27,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <string>
+#include <vector>
 
 static void emit(int step, const char *name, double value) {
     unsigned long long bits;
@@ -83,12 +85,118 @@ static void build_impulse_response(int16_t *ir, int samples) {
     }
 }
 
-/// Installs the deterministic impulse response on every exhaust channel.
+/// `ysWindowsAudioWaveFile`, without `mmio`: find `fmt `, find `data`, and read
+/// the data segment as raw 16-bit PCM. `bitsPerSample` is derived from
+/// `blockAlign / channels * 8` and the sample count is `dataSize / blockAlign`
+/// -- which is *frames*, and is what `EngineSimApplication` passes to
+/// `initializeImpulseResponse` as an `int16_t *`.
+struct WaveFile {
+    int channels = 0;
+    int sampleRate = 0;
+    int bitsPerSample = 0;
+    int frames = 0;
+    std::vector<int16_t> samples;
+
+    bool open(const std::string &path) {
+        std::FILE *file = std::fopen(path.c_str(), "rb");
+        if (file == nullptr) return false;
+
+        std::vector<char> bytes;
+        char buffer[65536];
+        size_t read = 0;
+        while ((read = std::fread(buffer, 1, sizeof(buffer), file)) > 0) {
+            bytes.insert(bytes.end(), buffer, buffer + read);
+        }
+        std::fclose(file);
+
+        if (bytes.size() < 12 ||
+            std::memcmp(&bytes[0], "RIFF", 4) != 0 ||
+            std::memcmp(&bytes[8], "WAVE", 4) != 0) {
+            return false;
+        }
+
+        bool haveFormat = false;
+        int blockAlign = 0;
+        size_t dataOffset = 0, dataSize = 0;
+
+        size_t offset = 12;
+        while (offset + 8 <= bytes.size()) {
+            const char *id = &bytes[offset];
+            uint32_t size = 0;
+            std::memcpy(&size, &bytes[offset + 4], 4);
+            const size_t body = offset + 8;
+            const size_t end = std::min(body + size, bytes.size());
+
+            if (std::memcmp(id, "fmt ", 4) == 0 && size >= 16) {
+                uint16_t channels = 0, alignment = 0;
+                uint32_t rate = 0;
+                std::memcpy(&channels, &bytes[body + 2], 2);
+                std::memcpy(&rate, &bytes[body + 4], 4);
+                std::memcpy(&alignment, &bytes[body + 12], 2);
+                this->channels = channels;
+                this->sampleRate = (int)rate;
+                blockAlign = alignment;
+                haveFormat = true;
+            }
+            else if (std::memcmp(id, "data", 4) == 0) {
+                dataOffset = body;
+                dataSize = end - body;
+            }
+
+            // A chunk's size is padded to an even boundary.
+            offset = body + size + (size & 1);
+        }
+
+        if (!haveFormat || blockAlign <= 0 || dataSize == 0) return false;
+
+        this->bitsPerSample = (blockAlign / this->channels) * 8;
+        this->frames = (int)(dataSize / (size_t)blockAlign);
+
+        this->samples.resize(this->frames);
+        for (int i = 0; i < this->frames; ++i) {
+            std::memcpy(&this->samples[i], &bytes[dataOffset + i * 2], 2);
+        }
+
+        return true;
+    }
+};
+
+/// FNV-1a over the decoded samples: how the wave gate compares two decoders
+/// without printing tens of thousands of lines.
+static uint64_t wave_hash(const WaveFile &wave) {
+    uint64_t hash = 0xcbf29ce484222325ull;
+
+    for (int16_t sample : wave.samples) {
+        for (int i = 0; i < 2; ++i) {
+            const uint8_t byte = (uint8_t)((uint16_t)sample >> (8 * i));
+            hash ^= byte;
+            hash *= 0x100000001b3ull;
+        }
+    }
+
+    return hash;
+}
+
+/// Installs the impulse response each exhaust names, and the deterministic one
+/// on any exhaust that names none. This is `EngineSimApplication::loadScript`'s
+/// audio setup: open the file, hand its samples to the synthesizer with the
+/// node's volume.
 static void install_impulse_response(PhysicsSimulator *simulator, Engine *engine) {
-    int16_t ir[512];
-    build_impulse_response(ir, 512);
+    int16_t fallback[512];
+    build_impulse_response(fallback, 512);
+
     for (int i = 0; i < engine->getExhaustSystemCount(); ++i) {
-        simulator->synthesizer().initializeImpulseResponse(ir, 512, 1.0f, i);
+        ImpulseResponse *response = engine->getExhaustSystem(i)->getImpulseResponse();
+
+        WaveFile wave;
+        if (response != nullptr && wave.open(response->getFilename())) {
+            simulator->synthesizer().initializeImpulseResponse(
+                wave.samples.data(), (unsigned int)wave.frames,
+                (float)response->getVolume(), i);
+        }
+        else {
+            simulator->synthesizer().initializeImpulseResponse(fallback, 512, 1.0f, i);
+        }
     }
 }
 

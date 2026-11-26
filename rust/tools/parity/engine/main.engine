@@ -94,3 +94,5 @@ E,exhaust0_primary_tube_length,3ff04189374bc6a8
 E,exhaust0_collector_area,3f809a9206930be1
 E,exhaust0_velocity_decay,3ff0000000000000
 E,exhaust0_audio_volume,3f847ae147ae147b
+E,exhaust0_impulse_response,es/sound-library/new/minimal_muffling_02.wav
+E,exhaust0_impulse_response_volume,3f847ae147ae147b
