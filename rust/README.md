@@ -32,9 +32,10 @@ Motivation and estimates: [`docs/rust-port-assessment.md`](../docs/rust-port-ass
 | `script` resolution (definitions, types, attributes) | `piranha/src/ir_*.cpp` | ✅ done | 660/660 + 701/701 rows identical to the reference |
 | `script` circularity checks | `piranha/src/ir_*.cpp` | ✅ done | E0020 gated by fixtures |
 | `script` validation (reported errors) | `piranha/src/ir_*.cpp` | ✅ done | 15 negative fixtures reproduce the reference's exact code multiset |
-| `script` references / expansion / type checks / node graph | `piranha/src/ir_*.cpp`, `node_graph.cpp` | ✅ done | `GRAPH`, `VALUES`, `EXECUTE` gates |
+| `script` references / expansion / type checks / node graph | `piranha/src/ir_*.cpp`, `node_graph.cpp` | ✅ done | `GRAPH`, `VALUES`, `EXECUTE`, `OPTIMIZE` gates |
 | `scripting/` bindings (`EngineContext` → `Engine`, vehicle, transmission) | `scripting/` | ✅ done | `RUN`, `DRIVEN`, `DRIVE` gates, 16 265 + 3 × ~800 000 checkpoints |
 | `engine-sim-cli` (a script run without the application) | `EngineSimApplication`'s frame loop | ✅ done | the same drive as `DRIVEN`, 7 tests |
+| breadth and performance (every engine driven; real time) | `EngineSimApplication` | ◐ done for the headless half | `RUNNING` (20 engines), `measure_performance.sh` (1.30x real time) |
 | app shell (window/render/UI/audio out) | `delta-studio` | ⬜ | — |
 
 **Verification result: the whole simulation core and the audio path are
@@ -106,7 +107,7 @@ two `es_script` classes whose value is a `GasSystem` calculation.
 ```bash
 cd rust
 cargo build --all-targets     # no warnings
-cargo test                    # 179 tests (core unit + gas + end-to-end + script + CLI + parity gates)
+cargo test                    # 183 tests (core unit + gas + end-to-end + script + CLI + parity gates)
 cargo test --release
 ./tools/parity/run_core_parity.sh 200000   # 8 964 002 bit-identical checkpoints
 ```
@@ -140,7 +141,7 @@ audio     264620 samples (6.00 s at 44.1 kHz)
 engine-sim-cli <script.mr> [--seconds s] [--fps n] [--wav path] [--csv path]
                [--throttle 0..1] [--dyno rpm] [--gear n] [--shift s]
                [--clutch 0..1] [--starter s] [--no-starter] [--no-ignition]
-               [--search dir]... [--quiet]
+               [--search dir]... [--quiet] [--timing]
 ```
 
 The wave file is 44.1 kHz, 16-bit, mono — what the synthesizer produces — and the
@@ -192,7 +193,8 @@ scenario as a Rust binary, and diff raw `f64` bit patterns:
 ./tools/parity/run_core_parity.sh 200000      # whole core, 24 fields per step
 PARITY_DYNO=1 ./tools/parity/run_core_parity.sh 20000   # same, dyno hold engaged
 ./tools/parity/run_dsp_parity.sh              # every audio filter + the synthesizer
-./tools/parity/run_script_parity.sh           # .mr front end: IR, RUN, DRIVEN, GRAPH, VALUES, OBJECTS, EXECUTE
+./tools/parity/run_script_parity.sh           # .mr front end: IR, RUN, DRIVEN, RUNNING, GRAPH, VALUES, OBJECTS, OPTIMIZE, EXECUTE
+./tools/parity/measure_performance.sh         # not a gate: how fast either side renders (real-time factor)
 RECORD_RESOLVED=1 ./tools/parity/run_script_parity.sh   # re-record the M2 targets
 RESOLVED_GAP=1 ./tools/parity/run_script_parity.sh      # how much of M2 is still open
 RECORD_ERRORS=1 ./tools/parity/run_script_parity.sh     # re-record the error fixtures
@@ -386,6 +388,30 @@ The port reproduces all of it operation for operation, including:
 Rendering is driven explicitly (`Simulator::render_audio_block`) instead of on
 the reference's audio thread, so PCM output is reproducible.
 
+## Real time
+
+`tools/parity/measure_performance.sh` runs every engine asset for two seconds of
+audio on both sides and reports the real-time factor — audio seconds per second
+of wall clock. It times the *loop*, not the process: the port reports its own
+(`engine-sim-cli --timing`), the original reports its own (`script_reference
+--bench`), and the shell times the setup around them, because on the
+nine-cylinder radial a 4 s script-to-engine build is twice the run it measures.
+
+| | port | original |
+|---|---|---|
+| all 21 scripts, 2 s each | **1.30x real time** | 1.13x |
+| slowest (the nine-cylinder radial) | 1.02x | 0.89x |
+
+Rendering is 44 100 samples a second through a 10 000-tap direct convolution per
+channel — the original's algorithm, and its order of summation is what makes it
+bit-exact, so an FFT or a partitioned convolution is not available. What *is*
+available is overlap: `ConvolutionFilter::f_pair` runs the two channels' chains in
+one pass (bit-identical by construction, 1.6x the multiply-adds per second and
+19-22% off the loop on the two-exhaust engines), and `write_to_synthesizer` no
+longer clones a cylinder head per cylinder per step. `docs/mr-interpreter-plan.md`
+§8.7 has the measurements, and the wrong instrument that first reported the port
+as slower than it is.
+
 ## Where the port stands
 
 The `.mr` pipeline is complete — front end, resolution, validation, node graph and
@@ -404,7 +430,14 @@ What is left is the app shell.
   `NodeProgram`, allocator, the mutation log). The original executes nodes in
   `NodeContainer` order and never calls `NodeProgram::optimize()` — the
   application does not — so the order is insertion order, and every `_evaluate`
-  side effect matches. Gated by `GRAPH`, `VALUES` and `EXECUTE`.
+  side effect matches. Gated by `GRAPH`, `VALUES`, `EXECUTE` (four fixtures, one
+  of which reads standard input) and `OPTIMIZE`. The runtime's four remaining
+  piranha features are closed rather than pending, and each is closed differently:
+  `console_in` is ported and gated (`Graph::outputs` carries the one value a run
+  writes into its own output), `checkEnabled` is dead (`connectEnableInput` has no
+  caller anywhere, so every node is enabled), `optimize`/`markDeadNodes` are
+  measured to change nothing (28 runs identical with and without, including the
+  whole engine trace) and `free` is a drop.
 * **M4 — the `scripting/` bindings**: `EngineContext`, `EngineNode::buildEngine`,
   every `*_node.h`, and the `actions.h` entry points. Gated by `script_reference
   --run`/`--engine` against the recorded

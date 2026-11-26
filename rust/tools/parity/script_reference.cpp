@@ -49,6 +49,7 @@
 // never consulted by piranha or the scripting layer).
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -1567,7 +1568,7 @@ static void dumpEngine(Engine *engine) {
 /// `EngineSimApplication::loadScript`'s drivetrain: the vehicle and transmission
 /// the script published, and the application's own only where it published none
 /// (one fallback each, not a pair).
-static void loadEngineAndTrace(Engine *engine, int stepCount) {
+static PhysicsSimulator *createEngineSimulator(Engine *engine) {
     es_script::Compiler::Output *output = es_script::Compiler::output();
 
     Vehicle *vehicle = (output != nullptr) ? output->vehicle : nullptr;
@@ -1615,6 +1616,12 @@ static void loadEngineAndTrace(Engine *engine, int stepCount) {
     // holds it so the engine actually runs, as `core_reference` does.
     simulator->m_starterMotor.m_enabled = true;
 
+    return simulator;
+}
+
+static void loadEngineAndTrace(Engine *engine, int stepCount) {
+    PhysicsSimulator *simulator = createEngineSimulator(engine);
+
     // Optional: drive the engine instead of just cranking it. Both are off by
     // default, so every gate's trace is the one it always was.
     TraceOptions options;
@@ -1645,6 +1652,59 @@ static void loadEngineAndTrace(Engine *engine, int stepCount) {
 
     dumpEngine(engine);
     traceFrames(simulator, engine, stepCount, options);
+}
+
+/// The application's frame loop with the writing taken out: `update`, then the
+/// synthesizer's own block, then `readAudioOutput` -- what the program does per
+/// frame while it is playing, and nothing else. Reports the wall time so the port
+/// can be asked the same question with `engine-sim-cli`.
+///
+///     bench,<frames>,<samples>,<wall seconds>
+static void benchEngine(Engine *engine, int frameCount) {
+    PhysicsSimulator *simulator = createEngineSimulator(engine);
+
+    static int16_t audio[4096];
+    long long samples = 0;
+
+    const auto start = std::chrono::steady_clock::now();
+
+    // `1/60` of a second a frame, as the application asks for: the simulator runs
+    // as many steps as it takes to advance that far, which is what makes it
+    // produce a frame's worth of audio. (The traces use a sub-half-timestep `dt`
+    // instead, to get *one* step a frame -- deterministic, and no use as a
+    // measure of anything.)
+    const double frameTime = 1.0 / 60.0;
+
+    // The same stopping rule `engine-sim-cli` uses: `frameCount` frames are
+    // `frameCount / 60` seconds, and the run ends once that much audio exists
+    // (with the same four-times-the-frames cap against a stalled synthesizer).
+    const long long targetSamples = (long long)std::llround(frameCount / 60.0 * 44100.0);
+    const int maxFrames = frameCount * 4 + 16;
+
+    int frames = 0;
+    for (int frame = 0; frame < maxFrames && samples < targetSamples; ++frame, ++frames) {
+        simulator->startFrame(frameTime);
+        while (simulator->simulateStep()) { /* run the frame */ }
+        simulator->endFrame();
+
+        Synthesizer &syn = simulator->synthesizer();
+        const int n = std::min(
+            std::max(0, 2000 - (int)syn.m_audioBuffer.size()),
+            (int)syn.m_inputChannels[0].data.size());
+        for (int i = 0; i < syn.m_inputChannelCount; ++i) {
+            syn.m_inputChannels[i].data.read(
+                (size_t)n, syn.m_inputChannels[i].transferBuffer);
+        }
+
+        renderBlock(syn);
+
+        samples += simulator->readAudioOutput(4096, audio);
+    }
+
+    const auto end = std::chrono::steady_clock::now();
+    const double wall = std::chrono::duration<double>(end - start).count();
+
+    std::printf("bench,%d,%lld,%.6f\n", frames, samples, wall);
 }
 
 /// `IrNodeDefinition::validateBuiltinMappings` compares a `=>` definition's
@@ -1802,7 +1862,7 @@ int main(int argc, char **argv) {
         return 0;
     }
 
-    if ((mode != "--run" && mode != "--check" && mode != "--resolved"
+    if ((mode != "--run" && mode != "--bench" && mode != "--check" && mode != "--resolved"
             && mode != "--errors" && mode != "--graph"
             && mode != "--values" && mode != "--execute"
             && mode != "--engine" && mode != "--objects"
@@ -2053,6 +2113,16 @@ int main(int argc, char **argv) {
         piranha::NodeProgram program;
         root->build(&program);
         program.initialize();
+
+        // `NodeProgram::optimize` is what the application never calls -- it folds
+        // constant operands into literals and prunes actionless nodes nothing
+        // reads. `PARITY_OPTIMIZE=1` runs it so the gate can measure whether it
+        // changes anything a run writes, which is what decides whether the port
+        // has to have it at all.
+        if (std::getenv("PARITY_OPTIMIZE") != nullptr) {
+            program.optimize();
+        }
+
         if (!program.execute()) {
             std::fprintf(stderr, "runtime error: %s\n",
                 program.getRuntimeError().c_str());
@@ -2089,6 +2159,11 @@ int main(int argc, char **argv) {
     if (engine == nullptr) {
         std::fprintf(stderr, "the script did not create an engine\n");
         return 1;
+    }
+
+    if (mode == "--bench") {
+        benchEngine(engine, stepCount > 0 ? stepCount : 120);
+        return 0;
     }
 
     std::printf("-- engine --\n");

@@ -666,27 +666,40 @@ impl Simulator {
         let cylinder_count = self.engine.get_cylinder_count();
 
         for i in 0..cylinder_count {
-            let piston = &self.engine.pistons[i];
-            let bank = piston.bank.clone();
-            let head = self.engine.heads[bank.index().max(0) as usize].clone();
-            let cylinder_index = piston.cylinder_index.max(0) as usize;
-            let exhaust_index = head.exhaust_system(cylinder_index).expect("exhaust");
-            let chamber = &self.engine.chambers[i];
+            // Everything here reads the engine and only the delay filter writes,
+            // so the reads are taken in one immutable borrow and the filter
+            // advanced afterwards. Cloning the head instead -- four `Arc`s and a
+            // `Vec` per cylinder, per simulation step -- is what a borrow checker
+            // workaround costs: on the nine-cylinder radial it was most of the
+            // frame.
+            let (exhaust_index, exhaust_length, audio_volume, attenuation_sound, exhaust_flow) = {
+                let piston = &self.engine.pistons[i];
+                let head = &self.engine.heads[piston.bank.index().max(0) as usize];
+                let cylinder_index = piston.cylinder_index.max(0) as usize;
+                let exhaust_index = head.exhaust_system(cylinder_index).expect("exhaust");
+                let chamber = &self.engine.chambers[i];
 
-            let exhaust_length =
-                head.header_primary_length(cylinder_index) + self.engine.exhausts[exhaust_index].length;
+                let exhaust_length = head.header_primary_length(cylinder_index)
+                    + self.engine.exhausts[exhaust_index].length;
 
-            let exhaust_flow = attenuation_3
-                * 1600.0
-                * (1.0 * (chamber.exhaust_runner_and_primary.pressure()
-                    - units::pressure(1.0, units::ATM))
-                    + 0.1 * chamber.exhaust_runner_and_primary.dynamic_pressure(1.0, 0.0)
-                    + 0.1 * chamber.exhaust_runner_and_primary.dynamic_pressure(-1.0, 0.0));
+                let exhaust_flow = attenuation_3
+                    * 1600.0
+                    * (1.0 * (chamber.exhaust_runner_and_primary.pressure()
+                        - units::pressure(1.0, units::ATM))
+                        + 0.1 * chamber.exhaust_runner_and_primary.dynamic_pressure(1.0, 0.0)
+                        + 0.1 * chamber.exhaust_runner_and_primary.dynamic_pressure(-1.0, 0.0));
+
+                (
+                    exhaust_index,
+                    exhaust_length,
+                    self.engine.exhausts[exhaust_index].audio_volume,
+                    head.sound_attenuation(cylinder_index),
+                    exhaust_flow,
+                )
+            };
 
             let delayed_exhaust_pulse = self.delay_filters[i].fast_f(exhaust_flow);
 
-            let audio_volume = self.engine.exhausts[exhaust_index].audio_volume;
-            let attenuation_sound = head.sound_attenuation(cylinder_index);
             let index = self.engine.exhausts[exhaust_index].index.max(0) as usize;
 
             self.exhaust_flow_staging_buffer[index] += attenuation_sound

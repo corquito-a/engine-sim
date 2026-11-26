@@ -70,6 +70,8 @@ usage: engine-sim-cli <script.mr> [options]
   --no-ignition      leave the ignition disabled (the engine will not fire)
   --search <dir>     add an import search path          (default: ../../es/, ../es/, es/)
   --quiet            the summary only
+  --timing           print the frame loop's own wall time to stderr, as
+                     `timing,<frames>,<samples>,<seconds>` (measure_performance.sh)
 
 The starter is released after --starter seconds and the ignition is enabled, so
 the engine runs on its own; --no-starter and --no-ignition turn those off.
@@ -107,6 +109,7 @@ struct Options {
     ignition: bool,
     search: Vec<String>,
     quiet: bool,
+    timing: bool,
 }
 
 impl Default for Options {
@@ -130,6 +133,7 @@ impl Default for Options {
                 "es/".to_string(),
             ],
             quiet: false,
+            timing: false,
         }
     }
 }
@@ -181,6 +185,7 @@ impl Options {
                 "--no-starter" => options.starter_seconds = 0.0,
                 "--no-ignition" => options.ignition = false,
                 "--quiet" => options.quiet = true,
+                "--timing" => options.timing = true,
                 "--search" => {
                     if options.search == Options::default().search {
                         options.search.clear();
@@ -336,6 +341,15 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
         std::fs::write(path, csv).map_err(|error| format!("could not write {}: {}", path, error))?;
     }
 
+    if options.timing {
+        eprintln!(
+            "timing,{},{},{:.6}",
+            run.rows.len(),
+            run.audio.len(),
+            run.wall_seconds
+        );
+    }
+
     if !options.quiet {
         let mut text = summary(&simulator, &options, &run);
 
@@ -373,6 +387,10 @@ struct Run {
     rows: Vec<Row>,
     engine_time: f64,
     steps: usize,
+    /// Wall time of the loop alone, for `--timing`. Loading the script, building
+    /// the engine and recording the impulse responses happen before it and are
+    /// not rendering.
+    wall_seconds: f64,
 }
 
 /// The application's frame loop: run the frame, end it, render what the
@@ -386,6 +404,7 @@ struct Run {
 /// is the same as asking for it in engine time, and it is the number the wave file
 /// ends up with.
 fn simulate(simulator: &mut Simulator, options: &Options) -> Run {
+    let started = std::time::Instant::now();
     let frame_time = 1.0 / options.fps;
     let target_samples = (options.seconds * 44100.0).round() as usize;
 
@@ -398,6 +417,7 @@ fn simulate(simulator: &mut Simulator, options: &Options) -> Run {
         rows: Vec::new(),
         engine_time: 0.0,
         steps: 0,
+        wall_seconds: 0.0,
     };
 
     let mut buffer = [0i16; 8192];
@@ -475,6 +495,7 @@ fn simulate(simulator: &mut Simulator, options: &Options) -> Run {
         frame += 1;
     }
 
+    run.wall_seconds = started.elapsed().as_secs_f64();
     run
 }
 
