@@ -34,6 +34,7 @@ Motivation and estimates: [`docs/rust-port-assessment.md`](../docs/rust-port-ass
 | `script` validation (reported errors) | `piranha/src/ir_*.cpp` | ✅ done | 15 negative fixtures reproduce the reference's exact code multiset |
 | `script` references / expansion / type checks / node graph | `piranha/src/ir_*.cpp`, `node_graph.cpp` | ⬜ | — |
 | `scripting/` bindings (`EngineContext` → `Engine`) | `scripting/` | ⬜ | — |
+| `engine-sim-cli` (a script run without the application) | `EngineSimApplication`'s frame loop | ✅ done | `DRIVEN` gate + 8 tests |
 | app shell (window/render/UI/audio out) | `delta-studio` | ⬜ | — |
 
 **Verification result: the whole simulation core and the audio path are
@@ -105,7 +106,7 @@ two `es_script` classes whose value is a `GasSystem` calculation.
 ```bash
 cd rust
 cargo build --all-targets     # no warnings
-cargo test                    # 150 tests (core unit + gas + end-to-end + script + parity gates)
+cargo test                    # 174 tests (core unit + gas + end-to-end + script + CLI + parity gates)
 cargo test --release
 ./tools/parity/run_core_parity.sh 200000   # 8 964 002 bit-identical checkpoints
 ```
@@ -114,6 +115,60 @@ cargo test --release
 `assets/engines/atg-video-1/01_honda_trx520.mr` with the parameter values the
 upstream scripting layer produces. It is `include!`d by the tests and examples
 (not a Cargo target).
+
+## The command line
+
+`crates/engine-sim-cli` is the application's frame loop with the window removed:
+a `.mr` script in, a wave file and a CSV out.
+
+```bash
+cargo build --release
+./target/release/engine-sim-cli ../assets/main.mr --seconds 6 --throttle 1 \
+    --wav /tmp/ej25.wav --csv /tmp/ej25.csv
+
+engine    Subaru EJ25
+layout    2 banks, 4 cylinders, 1 exhaust system(s), 1 intake(s)
+frames    327 frames, 120009 simulation steps (6.00 s of engine time at 60 fps)
+rpm       89 to 849 (final 757)
+dyno      not engaged (--dyno <rpm> holds the engine and fills torque/power)
+audio     264620 samples (6.00 s at 44.1 kHz)
+  wrote   /tmp/ej25.wav (264620 samples)
+  wrote   /tmp/ej25.csv (327 rows)
+```
+
+```
+engine-sim-cli <script.mr> [--seconds s] [--fps n] [--wav path] [--csv path]
+               [--throttle 0..1] [--dyno rpm] [--gear n] [--starter s]
+               [--no-starter] [--no-ignition] [--search dir]... [--quiet]
+```
+
+The wave file is 44.1 kHz, 16-bit, mono — what the synthesizer produces — and the
+CSV is one row per application frame: `frame,time_s,rpm,crank_rad_s,throttle,
+dyno_torque_nm,dyno_power_w,exhaust_pa,chamber0_pa,audio_samples`.
+
+Four things it does that are worth knowing, because they are the application's
+behaviour rather than the engine's:
+
+* **The audio is rendered even without `--wav`.** The synthesizer and combustion
+  draw from the same random sequence, so skipping it changes the physics.
+* **The starter is released after `--starter` seconds** (default 1). Its
+  constraint *drives the crankshaft at the starter's speed*, so holding it — what
+  every parity trace does — would sit at 500 rpm forever, however wide the
+  throttle is.
+* **The ignition is switched on**, which the engine does not do for itself: the
+  module is built disabled and the application's `A` key is what enables it. Run
+  with `--no-ignition` and the engine compresses and dies, which is what the
+  original does too.
+* **The driveline's clutch is disengaged**, as the application starts it
+  (`Transmission` begins at zero clutch pressure), so the engine turns against
+  its own inertia. `--gear` changes the ratio the transmission reports and the
+  rotating mass' inertia; it cannot move the car.
+
+`--dyno <rpm>` holds the crankshaft at that speed, the way the application's dyno
+does, and is the way to read torque: at 3000 rpm and wide-open throttle the
+Subaru EJ25 produces 240 Nm / 75 kW. The dynamometer's torque is the
+constraint's *reaction*, so the API reports it negative while the engine drives
+it; the summary negates it, the CSV keeps the raw value.
 
 ## Parity harnesses (the important part)
 
@@ -125,7 +180,7 @@ scenario as a Rust binary, and diff raw `f64` bit patterns:
 ./tools/parity/run_core_parity.sh 200000      # whole core, 24 fields per step
 PARITY_DYNO=1 ./tools/parity/run_core_parity.sh 20000   # same, dyno hold engaged
 ./tools/parity/run_dsp_parity.sh              # every audio filter + the synthesizer
-./tools/parity/run_script_parity.sh           # .mr front end: IR, RUN, GRAPH, VALUES, OBJECTS, EXECUTE
+./tools/parity/run_script_parity.sh           # .mr front end: IR, RUN, DRIVEN, GRAPH, VALUES, OBJECTS, EXECUTE
 RECORD_RESOLVED=1 ./tools/parity/run_script_parity.sh   # re-record the M2 targets
 RESOLVED_GAP=1 ./tools/parity/run_script_parity.sh      # how much of M2 is still open
 RECORD_ERRORS=1 ./tools/parity/run_script_parity.sh     # re-record the error fixtures
@@ -256,6 +311,18 @@ have been subtly (or grossly) wrong with no test noticing:
 4. **Combustion is random.** See above: without pinning `rand()`, combustion
    cannot be compared at all, and it is not reproducible between two runs of
    the *original* either.
+
+### Every `.mr` gate was cranking, never running
+
+`IgnitionModule` is constructed with `m_enabled = false` and nothing enables it
+except the application's `A` key. Both `.mr` harnesses inherited that, so for
+every trace in `run_script_parity.sh` the engine turned over and never fired —
+400 frames of a starter motor, bit-exact in every field, and blind to the whole
+combustion path of the script-built engine. It only mattered when the CLI tried
+to run an engine for real: `engine-sim-cli assets/main.mr --throttle 1` idled at
+the starter's speed and then stopped, because no cylinder had ever lit. The fix
+is one line in the driver, and the `DRIVEN` gate is the test that would have
+caught it.
 
 ### The dyno hold stalls this fixture (in the original, too)
 
@@ -397,6 +464,7 @@ The gate (`run_script_parity.sh`) currently reports:
 ```
 -- 58 files round-tripped and validated, 0 mismatches
 PASS: 16265 engine/trace checkpoints match the recorded fixture
+PASS: 808301 checkpoints of a running engine are identical
 ```
 
 The second line is the interesting one: the oracle resolves, validates, builds
@@ -405,6 +473,23 @@ engine is the Subaru EJ25 — 2 banks, 4 cylinders, 2.457 L displacement, 79 mm
 stroke (`crank0_throw = 0.0395`), 130.6 mm rods, 67 cc chambers, 19.8 cm² intake
 runners — exactly what the script declares. That output is now the target for
 M4.
+
+The third line is the newest one, and it exists because the first two are both
+*cranking*: 400 frames with the starter held and the ignition off, which the
+application does before `S` and `A` are pressed. Nothing in them fires, so
+nothing in them could catch a difference in combustion or in the spark's timing.
+`DRIVEN` presses the keys — ignition on, starter held for a second and released,
+throttle wide open — and runs **20 000 frames instead of 400**: two seconds of an
+engine that is running, 1 740 of them with a lit cylinder and chamber peaks
+around 17 bar. All 808 301 checkpoints match. The harness takes the same `PARITY_*`
+environment variables as the port's example (`PARITY_THROTTLE`,
+`PARITY_STARTER_SECONDS`, `PARITY_IGNITION`, `PARITY_DYNO_RPM`), so any driven
+scenario can be compared by hand:
+
+```bash
+PARITY_STEPS=20000 PARITY_THROTTLE=1 PARITY_STARTER_SECONDS=1 PARITY_IGNITION=1 \
+    ./tools/parity/run_script_parity.sh       # (the gate does exactly this)
+```
 
 Four MSVC-isms had to be patched in the staged copy of piranha/scripting (never
 in the submodule), none of which change arithmetic:

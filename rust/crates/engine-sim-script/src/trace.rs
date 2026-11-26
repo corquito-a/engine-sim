@@ -15,13 +15,71 @@ fn emit(out: &mut String, step: usize, name: &str, value: f64) {
     out.push_str(&format!("{},{},{:016x}\n", step, name, value.to_bits()));
 }
 
+/// How a run is driven, the port's half of `core_trace_common.h`'s
+/// `TraceOptions`. The defaults are what every gate uses: the script's own
+/// throttle, the starter held (as the application holds `S`), the ignition as the
+/// script left it.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Drive {
+    /// Throttle plate position, applied through the engine's speed control the
+    /// way the application applies its keys (`position = 1 - speed_control^gamma`).
+    pub throttle: Option<f64>,
+
+    /// Engine time after which the starter is released. Without it the starter's
+    /// velocity constraint holds the crankshaft at the starter's speed forever.
+    pub starter_seconds: Option<f64>,
+
+    /// Whether the ignition fires. The module is built disabled, and the
+    /// application only enables it when `A` is pressed, so a run that wants a
+    /// running engine has to ask.
+    pub ignition: Option<bool>,
+
+    /// Dyno hold speed in rpm. A held dyno takes the place of the starter.
+    pub dyno_rpm: Option<f64>,
+}
+
+impl Drive {
+    /// Applies this frame's part of the drive, before the frame is stepped.
+    fn apply(&self, sim: &mut Simulator, time: f64) {
+        if let Some(throttle) = self.throttle {
+            // Only the speed control: the engine's linkage turns it into a plate
+            // position (and the reference harness does exactly this much).
+            sim.engine.set_speed_control(1.0 - throttle);
+        }
+
+        if let Some(seconds) = self.starter_seconds {
+            if time >= seconds {
+                sim.set_starter_enabled(false);
+            }
+        }
+
+        if let Some(rpm) = self.dyno_rpm {
+            sim.set_starter_enabled(false);
+            sim.set_dyno_enabled(true);
+            sim.set_dyno_hold(true);
+            sim.set_dyno_rotation_speed(units::rpm(rpm));
+        }
+    }
+}
+
 /// Runs `steps` application frames, emitting the physics, the synthesizer input
 /// and every rendered audio sample.
 pub fn frames(sim: &mut Simulator, steps: usize) -> String {
+    frames_driven(sim, steps, &Drive::default())
+}
+
+/// `frames`, driven: see [`Drive`].
+pub fn frames_driven(sim: &mut Simulator, steps: usize, drive: &Drive) -> String {
     let mut out = String::new();
     let timestep = sim.get_timestep();
 
     for step in 0..steps {
+        if let Some(ignition) = drive.ignition {
+            sim.engine.ignition.enabled = ignition;
+        }
+
+        drive.apply(sim, step as f64 * timestep);
+
         // `startFrame` with a sub-half-timestep `dt` yields exactly one
         // simulation step per frame, matching the reference harness.
         sim.start_frame(timestep * 0.1);

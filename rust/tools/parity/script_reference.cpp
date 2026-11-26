@@ -1592,8 +1592,28 @@ static void loadEngineAndTrace(Engine *engine, int stepCount) {
     // holds it so the engine actually runs, as `core_reference` does.
     simulator->m_starterMotor.m_enabled = true;
 
+    // Optional: drive the engine instead of just cranking it. Both are off by
+    // default, so every gate's trace is the one it always was.
+    TraceOptions options;
+
+    if (const char *throttle = std::getenv("PARITY_THROTTLE")) {
+        options.throttle = std::atof(throttle);
+    }
+
+    if (const char *starter = std::getenv("PARITY_STARTER_SECONDS")) {
+        options.starter_seconds = std::atof(starter);
+    }
+
+    if (const char *dyno = std::getenv("PARITY_DYNO_RPM")) {
+        options.dyno_rpm = std::atof(dyno);
+    }
+
+    if (const char *ignition = std::getenv("PARITY_IGNITION")) {
+        options.ignition = std::atoi(ignition);
+    }
+
     dumpEngine(engine);
-    traceFrames(simulator, engine, stepCount);
+    traceFrames(simulator, engine, stepCount, options);
 }
 
 /// `IrNodeDefinition::validateBuiltinMappings` compares a `=>` definition's

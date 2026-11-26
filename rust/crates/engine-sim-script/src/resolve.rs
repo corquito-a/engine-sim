@@ -10,6 +10,7 @@
 //! under.
 
 use crate::ir::{Statement, Unit};
+use crate::program::Program;
 use crate::parser::{parse_unit, ParseError};
 
 use std::collections::HashSet;
@@ -82,6 +83,26 @@ pub fn load(root: &str, search_paths: &[&str]) -> Result<Vec<Unit>, LoadError> {
 pub struct LoadedGraph {
     pub units: Vec<Unit>,
     pub imports: Vec<Vec<String>>,
+}
+
+/// The whole front end in one call: load `entry` and everything it imports,
+/// lower it into an arena, resolve the definitions, expand, and build the node
+/// graph into a [`Program`].
+///
+/// Every driver does exactly this sequence, in this order, and the order is
+/// observable (`lower` before `link_imports`, expansion before the graph), so it
+/// lives here rather than in each of them.
+pub fn program(entry: &str, search_paths: &[&str]) -> Result<Program, LoadError> {
+    let graph = load_graph(entry, search_paths)?;
+
+    let mut arena = crate::lower::Arena::lower(&graph.units);
+    arena.set_rules(crate::builtin_types::Rules::EngineSim);
+    arena.link_imports(&graph.imports);
+    arena.resolve_all_definitions();
+    arena.check_circular_definitions_all();
+    arena.expand_all();
+
+    Ok(Program::new(arena.build_graph()))
 }
 
 pub fn load_graph(root: &str, search_paths: &[&str]) -> Result<LoadedGraph, LoadError> {

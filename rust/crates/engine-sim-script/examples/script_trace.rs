@@ -11,7 +11,11 @@
 //!
 //!     script_trace <root.mr> [search-path...]
 //!
-//! `PARITY_STEPS` sets the frame count (400, the fixture's).
+//! `PARITY_STEPS` sets the frame count (400, the fixture's), and
+//! `PARITY_THROTTLE`, `PARITY_STARTER_SECONDS`, `PARITY_IGNITION` and
+//! `PARITY_DYNO_RPM` drive the run the way the reference harness's `TraceOptions`
+//! does -- by default the starter is held and nothing else is touched, which is
+//! what every gate compares.
 
 use engine_sim_script::build;
 use engine_sim_script::engine_dump;
@@ -20,6 +24,10 @@ use engine_sim_script::program::Program;
 use engine_sim_script::resolve::load_graph;
 use engine_sim_script::trace;
 use engine_sim_script::Rules;
+
+fn number(name: &str) -> Option<f64> {
+    std::env::var(name).ok().and_then(|value| value.parse().ok())
+}
 
 fn main() {
     let mut arguments = std::env::args().skip(1);
@@ -43,6 +51,13 @@ fn main() {
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(400);
+
+    let drive = trace::Drive {
+        throttle: number("PARITY_THROTTLE"),
+        starter_seconds: number("PARITY_STARTER_SECONDS"),
+        ignition: number("PARITY_IGNITION").map(|value| value != 0.0),
+        dyno_rpm: number("PARITY_DYNO_RPM"),
+    };
 
     let graph = match load_graph(&entry, &search) {
         Ok(graph) => graph,
@@ -82,7 +97,7 @@ fn main() {
         out.push('\n');
     }
 
-    out.push_str(&trace::frames(&mut simulator, steps));
+    out.push_str(&trace::frames_driven(&mut simulator, steps, &drive));
 
     print!("{}", out);
 }

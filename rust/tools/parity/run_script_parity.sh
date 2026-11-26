@@ -18,6 +18,13 @@
 #          all of it has to match -- the reference against the recorded fixture,
 #          and the port against the reference.
 #
+#   DRIVEN the same script with the keys pressed: `PARITY_IGNITION=1`, the
+#          starter held for one second and released, the throttle wide open, and
+#          20 000 frames instead of 400 -- two seconds of an engine that is
+#          actually running. The RUN gate only ever turns the engine over, so it
+#          cannot see when a cylinder fires; this one can, because every firing
+#          has to land on the same crank angle on both sides.
+#
 #   GRAPH  every script in `tools/parity/graph/` is built into a node graph by
 #          the original (`IrCompilationUnit::build`) and compared against the
 #          recorded structure. The Rust node graph is what has to reproduce it.
@@ -216,6 +223,32 @@ else
         > "$REPO_ROOT/rust/crates/engine-sim-script/fixtures/main_engine.trace" 2> "$WORK/main.err" \
         || { echo "FAIL: the oracle could not run assets/main.mr"; head -30 "$WORK/main.err"; exit 1; }
     echo "recorded rust/crates/engine-sim-script/fixtures/main_engine.trace"
+fi
+
+# The RUN gate cranks: the starter is held for all 400 frames and the ignition is
+# off, which is the application before `S` and `A` are pressed. Nothing in it
+# fires, so nothing in it can catch a difference in combustion. This gate presses
+# the keys -- ignition on, starter held for a second and released, throttle wide
+# open -- and runs twenty thousand frames, two seconds of a running engine, where
+# every firing has to land on the same crank angle on both sides.
+echo "== gate DRIVEN: a running engine, both sides =="
+DRIVEN_STEPS=20000
+
+PARITY_STEPS="$DRIVEN_STEPS" PARITY_THROTTLE=1 PARITY_STARTER_SECONDS=1 PARITY_IGNITION=1 \
+    "$SCRIPT_TRACE" assets/main.mr > "$WORK/driven.port.trace" 2> "$WORK/driven.port.err" \
+    || { echo "FAIL: the port could not drive assets/main.mr"; head -20 "$WORK/driven.port.err"; exit 1; }
+
+PARITY_STEPS="$DRIVEN_STEPS" PARITY_THROTTLE=1 PARITY_STARTER_SECONDS=1 PARITY_IGNITION=1 \
+    "$WORK/script_reference" --run assets/main.mr "$WORK/main.ir" "$DRIVEN_STEPS" \
+        > "$WORK/driven.trace" 2> "$WORK/driven.err" \
+    || { echo "FAIL: the oracle could not drive assets/main.mr"; head -20 "$WORK/driven.err"; exit 1; }
+
+if diff -q "$WORK/driven.trace" "$WORK/driven.port.trace" >/dev/null; then
+    echo "PASS: $(( $(wc -l < "$WORK/driven.trace") )) checkpoints of a running engine are identical"
+else
+    echo "FAIL: a running engine diverges from the original"
+    diff "$WORK/driven.trace" "$WORK/driven.port.trace" | head -20
+    exit 1
 fi
 
 # The node graph the IR generates: every fixture, plus every script under

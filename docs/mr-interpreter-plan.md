@@ -179,6 +179,7 @@ existing `reference.patch` concessions.
 | M3 | Rust: node graph + execution (`Node`, `NodeOutput`, `Channel`, `NodeProgram`, allocator) | mutation-log sequence equals reference | ~1 200 lines |
 | M4 | Rust: `es_script` bindings + `EngineContext` → `Engine` construction in `engine-sim-core` | G2 (full trace + audio) for **all** engine assets, fixture retired | ~2 500 lines, the largest chunk |
 | M5 | WAV impulse responses (`es/sound-library/*.wav`) + `impulse_response_library` | decoded samples bitwise equal; audio matches with the real IR | ~300 lines |
+| M6 | Rust: `engine-sim-cli` -- run a script's engine headlessly, write the audio and the telemetry | a driven run matches the reference for 2 s of combustion (`DRIVEN`); the binary's own contract is tested | ~400 lines |
 
 Each milestone is independently verifiable, and M0 is what unblocks everything.
 
@@ -196,6 +197,7 @@ Each milestone is independently verifiable, and M0 is what unblocks everything.
 | M3c | ◐ | **both gate-able halves done**. *Values*: `values.rs` is `full_compute` as a read-only walk — literals (their injected data, not the `%g` name), the four arithmetic families, negations, the conversions (`string_to_float` is `std::stringstream >>`, so a prefix and a `0.0` default), `string_add`, `NoOpNode`'s output reference, and `es_script`'s `k_28inH2O`/`k_carb` (`GasSystem`, via `engine-sim-core`); keyed on the class name after the rules prefix. *Program*: `program.rs` is `NodeProgram::initialize` plus `Node::evaluate` — top level then each container's children, early out when evaluated/evaluating, inputs first, then `_evaluate`, then output references — with the three classes whose `_evaluate` is observable (`console_out` writes, `throw_runtime_error` fails the run, `int_probe` computes and drops). Gated by `script_reference --values`/`--execute`: **3 value fixtures + 7 609 port values** across the 40 scripts of `assets/`, and **2 execute fixtures** comparing both the text written and whether the run failed, all byte-identical; `tests/value_tests.rs` and `tests/program_tests.rs` hold the same gate without a C++ build. Findings: the value layer is pull-based (nothing caches, the builtin `_evaluate`s are empty), and `+2.5` (`NoOpNode` feeding a container input) makes the original **segfault** — a node answering its own alias walk — so `build_graph` stops at the repeat (`Graph::recursion_exhausted`) instead. **Next**: M4, the `es_script` classes themselves; `checkEnabled`, `console_in`, `optimize`/`markDeadNodes` and `free` stay unported until something needs them |
 | M4 | ✅ | **the engine, built from the script and simulated by the port**. `build.rs` is `EngineNode::buildEngine` and every `generate` under it: the counts, the fuel, the mean-piston-speed curve, the crankshafts and their rod-journal indices, the banks with their pistons and rods (a slave rod taking its master's crankshaft), the heads with their camshafts, lobe centrelines and port-flow curves, the intakes, the exhausts, the ignition module's posts resolved through the bank cylinder indices, and the chambers. `trace.rs` + `examples/script_trace.rs` put that engine in the application's default vehicle and transmission and emit `traceFrames`' 33 fields per frame, so the `RUN` gate is now two-sided: `script_reference --run` against the recorded fixture, and the port's own engine against the reference -- **all 16 263 lines identical**, physics, gas dynamics, synthesizer input and rendered audio. `graph_dump --engine` covers the parameters on their own (98 lines), `tests/run_tests.rs` the same trace without a C++ build, and `tests/engine_tests.rs` the wiring of every engine input. What M4 deliberately does not build is the script's own `vehicle`/`transmission` (the application supplies its own, and no engine asset here sets them); the `impulse_response` an exhaust names it collects but does not open, which is M5's job. **M5 is done**: see the row below. **Widened past `main.mr`:** `tools/parity/engines/` holds one wrapper per engine asset that builds one -- 20 of them, from a Honda TRX520 single and a five-cylinder Audi to a Merlin V12 and a nine-cylinder radial -- each imported and `main()`ed so the same `--run` trace can be taken, and all 20 are byte-identical to the original (`PASS: 20 engines`, 15 339–21 672 lines each). What they found that one engine could not: an **exhaust index** that `build.rs` never stamped, so every exhaust wrote into staging slot 0 (2 461 differing lines on the 2JZ); `__engine_sim__add_slave_journal` registered as a class but unported, so a radial's slave journals never told their rod's master, and every rod rode a journal with no crankshaft; and the `std::set` of pointers behind the intake/exhaust order, which is allocation order -- node-id order -- and only shows itself on an engine with **two** exhaust systems of different lengths (the LFA V10, the Merlin, the 412 T2) |
 | M5 | ✅ | **the audio the script asks for**. `objects.rs`'s `ImpulseResponseData` is `ImpulseResponseNode::generate`: the filename resolved against the directory of the *unit that wrote the node* (`paths.rs` is `parent_path() / filename`, one of the two path rules a script can reach) and the volume the node asked for. `wav.rs` is `ysWindowsAudioWaveFile` without `mmio` -- walk the chunks, take `blockAlign / channels * 8` for the bit depth and `dataSize / blockAlign` for the frame count, and hand the synthesizer the first `frames` little-endian `int16`s, which is exactly what `EngineSimApplication::loadScript` passes it. `build` now returns `BuiltEngine` (the engine plus one response per exhaust) and `simulator` installs each file at its own volume, falling back to the deterministic table only for an exhaust that names none -- so the `RUN` gate's audio is a convolution over the real samples: **16 265 lines identical**, and the 1 376 `audio*` values the synthetic table used to produce all move. Three gates: the header's two new lines per exhaust (`exhaust<i>_impulse_response` and `..._volume`, 98 lines now), the `OBJECTS` gate's `impulse_response_filename`/`_volume` records for all ten library nodes, and `WAVE` -- `script_reference --wave` against `examples/wave_dump` on all **10 wave files**, channels, rate, bits, frames and an FNV-1a hash over every sample identical. The filename a dump prints is the repository-relative form, because the object holds the absolute one (the units are absolute) and a fixture that pinned a checkout directory would be worth nothing |
+| M6 | ✅ | **the application without the window**. `crates/engine-sim-cli` parses a command line, resolves and executes the script through the port's own front end (`resolve::program` is that whole pipeline in one call: load, lower, rules, imports, definitions, circularity, expansion, `Program::new`), builds the simulator, and then runs `EngineSimApplication`'s frame loop -- `start_frame`, `simulate_step` until it returns false, `end_frame`, `render_audio_block`, `read_audio_output` -- until it has produced the requested seconds *of audio*, because a frame is not exactly `1/fps` of engine time (the latency controller scales it by 1.1/0.9, so a fixed frame count runs 2.20 s for every 2 s asked). Output is a 44.1 kHz 16-bit mono wave file and one CSV row per frame (`frame,time_s,rpm,crank_rad_s,throttle,dyno_torque_nm,dyno_power_w,exhaust_pa,chamber0_pa,audio_samples`), plus a summary. Three behaviours are the application's, not the engine's, and the CLI has to reproduce them: the audio is always rendered, because the synthesizer shares its random sequence with combustion; the starter is released after `--starter` seconds, because its velocity constraint otherwise holds the crank at the starter's speed forever; and the ignition is switched on, because `IgnitionModule` is built disabled and nothing but the `A` key ever enables it. `--no-starter`/`--no-ignition` reach the old behaviour. The gate is `DRIVEN` (see below) plus `tests/cli_tests.rs`: 7 integration tests over the binary's contract (usage, `--help`, unknown option, throttles and gears out of range, the wave file's header and length, the CSV's shape) and one that pins the ignition default by requiring the engine to idle after the starter lets go, and to stop without it |
 
 Two deviations from the plan, both forced by the missing toolchain:
 
@@ -312,3 +314,53 @@ binaries (Debian 12 / glibc 2.36 here — a static build is safest).
 If neither is possible, A4 alone still verifies everything except the parser,
 and B1's parser is audited production-by-production against
 `specification.y` with the corpus as the acceptance test.
+
+### 8.4 The command line, and the frames that never fired
+
+M6 is the first milestone whose gate is not a trace diff of a script, because
+there was no headless reference to diff against: `EngineSimApplication` is a
+Win32/D3D window, and the only way to run a script without it is to write the
+loop. So the CLI is verified two ways instead.
+
+**The driving is verified against the oracle.** The `.mr` harnesses had always
+compared 400 frames with the starter held and the ignition off — that is what
+the application does before `S` and `A` are pressed, and it is bit-exact. It is
+also, as it turns out, 400 frames in which no cylinder ever fires: the whole
+combustion path of the script-built engine was outside every gate. `DRIVEN`
+closes that. Both harnesses take the same four environment variables
+(`PARITY_THROTTLE`, `PARITY_STARTER_SECONDS`, `PARITY_IGNITION`,
+`PARITY_DYNO_RPM`), and the gate drives `assets/main.mr` identically on both
+sides for **20 000 frames** — two seconds of a running engine, 1 740 frames with
+a lit cylinder, chamber peaks near 17 bar — and compares all **808 301**
+checkpoints. It costs three seconds.
+
+The first attempt at that comparison failed at step 3 558 by one ulp, and the
+cause was in the harness, not the port: the C++ side had no `PARITY_IGNITION`,
+so it ran with the module disabled while the port ran with it enabled, and the
+first spark — which at that mixture returns before doing anything except consume
+a `rand()` — moved the trace. Adding the variable to both sides made the two
+runs identical again. It is worth writing down because the diff was *tiny*: a
+1-ulp divergence at the first spark looks exactly like a floating-point
+mis-transliteration, and it was not one.
+
+**The binary is verified on its own terms.** `tests/cli_tests.rs` runs the
+executable and checks what a command line promises: `--help` exits 0 and lists
+the options, no script and unknown options and an out-of-range throttle or gear
+are refused with the right message, a 0.2 s run writes a wave file whose RIFF
+header says mono/44 100 Hz/16-bit, whose data block is exactly twice the sample
+count the summary reports, and whose CSV has one row per frame. The last test is
+the one that matters: it requires the engine to idle above 300 rpm a second after
+the starter is released, and to stop below 50 rpm with `--no-ignition`. That is
+the ignition default pinned as behaviour rather than as a comment.
+
+Two things the CLI deliberately does not do. It does not model a driver: there
+is no clutch pedal, so `--gear` changes the reported gear and the rotating
+mass' inertia but cannot move the car, and the engine is measured on the dyno
+(`--dyno <rpm>`), where the torque is real — 240 Nm and 75 kW at 3 000 rpm at
+wide-open throttle, 30 Nm at part throttle. And it does not chase the
+application's dyno *pull* (the ramp `m_dynoSpeed += rpm(500) * dt` while the
+filtered torque is positive): the sign of that condition in the original is
+inverted relative to what the API reports here, so porting it needs its own
+reading of the app's intent rather than a transliteration. The hold is enough to
+read a torque curve one point at a time, and it is what the harness already
+verifies.
