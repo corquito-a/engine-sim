@@ -32,10 +32,11 @@
 #          the data nodes generate and the application settings the script
 #          writes, byte for byte. This is the gate that reaches M4.
 #
-#   ENGINE (M4 target) `tools/parity/engine/main.engine` is the engine that
-#          `assets/main.mr` configures, dumped with `--engine`. The port does not
-#          produce it yet; it is recorded so that M4 has a fixed target that is
-#          smaller than the simulation trace.
+#   ENGINE `--engine` on `assets/main.mr`: the engine the script configures --
+#          its name and counts, its curves, and every part's parameters, 96
+#          lines -- byte for byte, against both the reference and the recorded
+#          `tools/parity/engine/main.engine`. This is what `EngineNode::buildEngine`
+#          decides; the simulation trace below is what the engine then does.
 #
 # Requires the staged reference at $REF_SCRIPT (default /tmp/refscript).
 set -euo pipefail
@@ -234,15 +235,33 @@ if [ "$objects_failures" -ne 0 ]; then
 fi
 echo "-- $objects_scripts scripts, every generated object and every settings line identical"
 
+# And above those: the engine header. `assets/main.mr` is the only script that
+# builds one, and the header is what `buildEngine` decided -- the name, the
+# counts, the curves and every part's parameters -- before anything is simulated.
+echo "== gate ENGINE: the engine a script configures =="
+"$IR_DUMP" assets/main.mr > "$WORK/main.ir"
+"$WORK/script_reference" --engine assets/main.mr "$WORK/main.ir" > "$WORK/engine.ref" 2> "$WORK/engine.err" \
+    || { echo "FAIL: the reference could not configure the engine"; head -20 "$WORK/engine.err"; exit 1; }
+"$GRAPH_DUMP" --engine assets/main.mr > "$WORK/engine.port" 2> "$WORK/engine.port.err" \
+    || { echo "FAIL: the port could not configure the engine"; head -20 "$WORK/engine.port.err"; exit 1; }
+
+if ! diff -q "$WORK/engine.ref" "$WORK/engine.port" > /dev/null; then
+    echo "FAIL: the port's engine header differs from the reference"
+    diff "$WORK/engine.ref" "$WORK/engine.port" | head -20
+    exit 1
+fi
+
+if ! diff -q "$WORK/engine.ref" "$HERE/engine/main.engine" > /dev/null; then
+    echo "FAIL: the recorded engine header is stale"
+    diff "$HERE/engine/main.engine" "$WORK/engine.ref" | head -20
+    exit 1
+fi
+echo "PASS: $(( $(wc -l < "$WORK/engine.ref") )) engine header lines identical, and the recorded fixture still holds"
+
 # And above that: what a run writes, and whether it fails where the original
 # fails.
 echo "== gate EXECUTE: what a run writes =="
 python3 "$HERE/run_graph.py" --execute || exit 1
-
-# Informational: the engine header lines. `head` closes the pipe, and under
-# `pipefail` that used to end the script right here -- before the mismatch check
-# and the final `PASS` -- so the truncation is deliberate and swallowed.
-grep -E '^(E|0),' "$REPO_ROOT/rust/crates/engine-sim-script/fixtures/main_engine.trace" | head -8 || true
 
 [ "$KEEP" = "--keep" ] || rm -rf "$WORK"
 

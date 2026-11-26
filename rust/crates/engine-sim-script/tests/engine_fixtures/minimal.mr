@@ -1,0 +1,31 @@
+// A complete engine node with nothing hanging off it: no banks, no fuel, no
+// ignition module. The port can describe such an engine; the original cannot,
+// because `buildEngine` dereferences `m_throttle`, `m_fuel` and the ignition
+// module unconditionally. So this is a test of the port's own wiring -- every
+// input goes to the one field it names -- rather than a parity fixture.
+import "engine_sim.mr"
+
+units units()
+
+private node tiny {
+    alias output __out:
+        engine(
+            name: "Tiny Single",
+            starter_torque: 12 * units.lb_ft,
+            starter_speed: 34 * units.rpm,
+            dyno_min_speed: 1234 * units.rpm,
+            dyno_max_speed: 5678 * units.rpm,
+            dyno_hold_step: 111 * units.rpm,
+            redline: 9999 * units.rpm,
+            simulation_frequency: 4321,
+            hf_gain: 0.25,
+            jitter: 0.125,
+            noise: 0.5
+        );
+}
+
+public node main {
+    set_engine(tiny())
+}
+
+main()
