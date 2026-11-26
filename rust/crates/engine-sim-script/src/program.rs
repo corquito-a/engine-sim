@@ -123,22 +123,12 @@ impl Program {
             return Ok(());
         };
 
+        // The top level's nodes, in order. A container node reaches its own
+        // nodes through `_evaluate` (see `run`), and every other container is
+        // reached through the *dependency* of an input, so this is the whole
+        // walk -- there is no second pass over containers that "nothing ran".
         for node in self.graph.node(root).nodes.clone() {
             self.evaluate(node)?;
-        }
-
-        // `NodeContainer::_evaluate` only ever reaches the nodes of the container
-        // a node owns, so a container whose owning node nothing evaluates -- an
-        // engine part's group, reached only through an object input -- would never
-        // run. Those are the containers the walk above did not touch, and they are
-        // run in *reverse* id order: a dependency in this graph points forward
-        // (`add_cylinder`'s bank input depends on a later container), so last-first
-        // is a topological order of the dependency forest -- run the other way
-        // round, a bank's cylinders come out reversed.
-        for container in self.unreached_containers(root) {
-            for node in self.graph.node(container).nodes.clone() {
-                self.evaluate(node)?;
-            }
         }
 
         Ok(())
@@ -187,47 +177,16 @@ impl Program {
     }
 
     /// `Node::_evaluate`, for the classes that have one.
-    /// The containers under `root` that still hold nodes nothing has evaluated,
-    /// last first (see `execute`).
-    fn unreached_containers(&self, root: usize) -> Vec<usize> {
-        let mut containers = Vec::new();
-        let mut stack = vec![root];
-
-        while let Some(container) = stack.pop() {
-            containers.push(container);
-
-            for child in self.graph.node(container).children.iter().rev() {
-                stack.push(*child);
-            }
-        }
-
-        let mut unreached: Vec<usize> = containers
-            .into_iter()
-            .filter(|container| {
-                self.graph
-                    .node(*container)
-                    .nodes
-                    .iter()
-                    .any(|node| !self.evaluated[*node])
-            })
-            .collect();
-
-        unreached.reverse();
-        unreached
-    }
-
     fn run(&mut self, node: usize) -> Result<(), String> {
         let data = self.graph.node(node);
 
         match data.class {
-            // `NodeContainer::_evaluate`: a container node run means the nodes in
-            // the container it owns run, in order, and a failure anywhere in them
-            // fails the container.
+            // `NodeContainer::_evaluate`: a container node *is* the container it
+            // owns -- `aContainerNode.nodes` are the nodes inside it -- so running
+            // it runs them, in order, and a failure anywhere in them fails it.
             NodeClass::Container => {
-                for child in data.children.clone() {
-                    for node in self.graph.node(child).nodes.clone() {
-                        self.evaluate(node)?;
-                    }
+                for node in self.graph.node(node).nodes.clone() {
+                    self.evaluate(node)?;
                 }
 
                 return Ok(());
@@ -538,11 +497,19 @@ impl Program {
             return self.context.fuel(node);
         }
 
+        // The original dereferences this pointer without checking it, so a fuel
+        // with no curve through it is undefined behaviour there; here it is a
+        // failed run, which is the closest thing to a crash that a library can
+        // report and is far better than quietly feeding the engine a flat curve.
         let turbulence = self
             .object_source(node, "turbulence_to_flame_speed_ratio")
             .and_then(|target| self.function(target).cloned())
-            .map(std::sync::Arc::new)
-            .or_else(|| Some(std::sync::Arc::new(Function::new(0, 0.0))))?;
+            .map(std::sync::Arc::new);
+
+        let Some(turbulence) = turbulence else {
+            self.runtime_error = Some("fuel has no turbulence curve".to_string());
+            return None;
+        };
 
         let parameters = FuelParameters {
             molecular_mass: self.number(node, "molecular_mass").unwrap_or(100.0 * G),
