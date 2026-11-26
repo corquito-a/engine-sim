@@ -55,6 +55,10 @@ pub struct Program {
     pub context: EngineContext,
     /// `Compiler::output()->applicationSettings`, written by the settings action.
     pub settings: ApplicationSettings,
+    /// What this run's standard input holds, and how much of it `console_in` has
+    /// consumed. The application never reads it; the piranha rules do.
+    console_input: String,
+    console_position: usize,
 }
 
 impl Program {
@@ -71,7 +75,38 @@ impl Program {
             filter_radius: BTreeMap::new(),
             context: EngineContext::new(),
             settings: ApplicationSettings::default(),
+            console_input: String::new(),
+            console_position: 0,
         }
+    }
+
+    /// The standard input a `console_in` node reads from. The application leaves
+    /// it empty; the harness fills it so a run is reproducible.
+    pub fn set_console_input(&mut self, text: impl Into<String>) {
+        self.console_input = text.into();
+        self.console_position = 0;
+    }
+
+    /// `std::cin >> std::string`: skip whitespace, then take the run of
+    /// non-whitespace that follows. At end of input it yields an empty string,
+    /// which is what libstdc++ leaves in the target when the extraction fails.
+    fn next_console_word(&mut self) -> String {
+        let text = self.console_input.as_bytes();
+        let mut at = self.console_position;
+
+        while at < text.len() && text[at].is_ascii_whitespace() {
+            at += 1;
+        }
+
+        let start = at;
+
+        while at < text.len() && !text[at].is_ascii_whitespace() {
+            at += 1;
+        }
+
+        self.console_position = at;
+
+        self.console_input[start..at].to_string()
     }
 
     /// Everything `console_out` has written so far.
@@ -210,6 +245,24 @@ impl Program {
                 if let Some(value) = self.input(node, "data") {
                     self.console.push_str(&value.text());
                 }
+
+                Ok(())
+            }
+
+            // `ConsoleInputNode::_evaluate`: write the prompt, read one word from
+            // standard input, and put it in the node's `raw_input` output. This is
+            // the one node whose value cannot be derived from its inputs.
+            "console_in" => {
+                let prompt = self
+                    .input(node, "prompt")
+                    .map(|value| value.text())
+                    .unwrap_or_default();
+
+                self.console.push_str(&prompt);
+
+                let word = self.next_console_word();
+
+                self.graph.outputs.insert(node, Value::Text(word));
 
                 Ok(())
             }

@@ -364,6 +364,44 @@ impl Synthesizer {
         n
     }
 
+    /// One channel's signal up to the convolution: jitter, DC removal,
+    /// differentiation, the shared air-noise low pass and the mix that feeds the
+    /// impulse response. The two `rand()` draws happen here, in channel order,
+    /// because that is the order the reference makes them in.
+    fn channel_input(
+        &mut self,
+        i: usize,
+        input_sample: usize,
+        rng: &mut Rng,
+        air_noise: f32,
+        df_f_mix: f32,
+    ) -> f32 {
+        // Consumed but unused in the reference; the draw still advances the
+        // shared sequence, so it must be kept.
+        let _r_0 = (2.0 * rng.next_unit() - 1.0) as f32;
+
+        let input = self.input_channels[i].transfer_buffer[input_sample];
+
+        let jittered_sample = self.filters[i].jitter_filter.fast_f(input, 1.0);
+
+        let f_in = jittered_sample;
+        let f_dc = self.filters[i].input_dc_filter.fast_f(f_in);
+        let f = f_in - f_dc;
+        let f_p = self.filters[i].derivative.f(f_in);
+
+        let noise = (2.0 * rng.next_unit() - 1.0) as f32;
+        // Note: `m_filters->` in the reference -- always channel 0.
+        let r = self.filters[0].air_noise_low_pass.fast_f(noise);
+        let r_mixed = air_noise * r + (1.0 - air_noise);
+
+        let mut v_in = f_p * df_f_mix + f * r_mixed * (1.0 - df_f_mix);
+        if v_in.is_subnormal() {
+            v_in = 0.0;
+        }
+
+        v_in
+    }
+
     /// `Synthesizer::renderAudio(int inputSample)`
     pub fn render_audio(&mut self, input_sample: usize, rng: &mut Rng) -> i16 {
         let air_noise = self.audio_parameters.air_noise;
@@ -371,34 +409,33 @@ impl Synthesizer {
         let conv_amount = self.audio_parameters.convolution;
 
         let mut signal = 0.0f32;
-        for i in 0..self.input_channel_count {
-            // Consumed but unused in the reference; the draw still advances the
-            // shared sequence, so it must be kept.
-            let _r_0 = (2.0 * rng.next_unit() - 1.0) as f32;
 
-            let input = self.input_channels[i].transfer_buffer[input_sample];
+        if self.input_channel_count == 2 {
+            // The two channels differ in nothing but their own samples, and their
+            // convolutions are independent: rendering them one after the other
+            // makes the second wait for the first to finish its 10 000-dependent-
+            // add chain. `ConvolutionFilter::f_pair` runs both chains in one pass
+            // and returns the same pair of floats `f` would have.
+            let v_0 = self.channel_input(0, input_sample, rng, air_noise, df_f_mix);
+            let v_1 = self.channel_input(1, input_sample, rng, air_noise, df_f_mix);
 
-            let jittered_sample = self.filters[i].jitter_filter.fast_f(input, 1.0);
+            let (left, right) = self.filters.split_at_mut(1);
+            let (conv_0, conv_1) = ConvolutionFilter::f_pair(
+                &mut left[0].convolution,
+                v_0,
+                &mut right[0].convolution,
+                v_1,
+            );
 
-            let f_in = jittered_sample;
-            let f_dc = self.filters[i].input_dc_filter.fast_f(f_in);
-            let f = f_in - f_dc;
-            let f_p = self.filters[i].derivative.f(f_in);
-
-            let noise = (2.0 * rng.next_unit() - 1.0) as f32;
-            // Note: `m_filters->` in the reference — always channel 0.
-            let r = self.filters[0].air_noise_low_pass.fast_f(noise);
-            let r_mixed = air_noise * r + (1.0 - air_noise);
-
-            let mut v_in = f_p * df_f_mix + f * r_mixed * (1.0 - df_f_mix);
-            if v_in.is_subnormal() {
-                v_in = 0.0;
+            signal += conv_amount * conv_0 + (1.0 - conv_amount) * v_0;
+            signal += conv_amount * conv_1 + (1.0 - conv_amount) * v_1;
+        } else {
+            for i in 0..self.input_channel_count {
+                let v_in = self.channel_input(i, input_sample, rng, air_noise, df_f_mix);
+                let conv_out = self.filters[i].convolution.f(v_in);
+                let v = conv_amount * conv_out + (1.0 - conv_amount) * v_in;
+                signal += v;
             }
-
-            let conv_out = self.filters[i].convolution.f(v_in);
-            let v = conv_amount * conv_out + (1.0 - conv_amount) * v_in;
-
-            signal += v;
         }
 
         signal = self.antialiasing.fast_f(signal);

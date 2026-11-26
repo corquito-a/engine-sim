@@ -457,6 +457,89 @@ impl ConvolutionFilter {
 
         result
     }
+
+    /// Two `f()` calls in one pass, for the two channels of the synthesizer.
+    ///
+    /// `f` is a chain of `sample_count` dependent multiply-adds: nothing in it
+    /// can start until the previous add has finished, so it costs about four
+    /// cycles a tap however fast the machine is. At the 10 000 taps the engine
+    /// simulator's impulse responses are clipped to, that is the entire cost of
+    /// rendering a frame -- 44 100 samples a second, two channels, 20 000
+    /// serial adds each. Two *independent* chains interleaved in one loop fill
+    /// the pipeline instead of waiting on it.
+    ///
+    /// This is not a shortcut that trades accuracy for speed: each filter keeps
+    /// its own shift register, its own offset and its own order of summation, so
+    /// the pair of results is bit-identical to calling `f` twice. Reordering the
+    /// additions -- a wider accumulator, a partitioned FFT, four partial sums --
+    /// would not be.
+    pub fn f_pair(a: &mut Self, x: f32, b: &mut Self, y: f32) -> (f32, f32) {
+        a.shift_register[a.shift_offset] = x;
+        b.shift_register[b.shift_offset] = y;
+
+        let (na, oa) = (a.sample_count, a.shift_offset);
+        let (nb, ob) = (b.sample_count, b.shift_offset);
+        let (la, lb) = (na - oa, nb - ob);
+
+        let mut result_a = 0.0f32;
+        let mut result_b = 0.0f32;
+
+        if na == nb && oa == ob {
+            // The usual case: both channels were initialised together and have
+            // been stepped together, so the registers wrap at the same index and
+            // the two chains can share the loop bounds exactly.
+            let shift_a = &a.shift_register;
+            let shift_b = &b.shift_register;
+            let response_a = &a.impulse_response;
+            let response_b = &b.impulse_response;
+
+            for i in 0..la {
+                result_a += response_a[i] * shift_a[i + oa];
+                result_b += response_b[i] * shift_b[i + oa];
+            }
+
+            for i in la..na {
+                let j = i - la;
+                result_a += response_a[i] * shift_a[j];
+                result_b += response_b[i] * shift_b[j];
+            }
+        } else {
+            // Different lengths or offsets: run the tails separately. Still
+            // interleaved over the overlap, and each chain still in its own order.
+            let overlap = la.min(lb);
+            for i in 0..overlap {
+                result_a += a.impulse_response[i] * a.shift_register[i + oa];
+                result_b += b.impulse_response[i] * b.shift_register[i + ob];
+            }
+
+            for i in overlap..la {
+                result_a += a.impulse_response[i] * a.shift_register[i + oa];
+            }
+
+            for i in overlap..lb {
+                result_b += b.impulse_response[i] * b.shift_register[i + ob];
+            }
+
+            if la < na {
+                for i in la..na {
+                    let j = i - la;
+                    result_a += a.impulse_response[i] * a.shift_register[j];
+                }
+            }
+
+            if lb < nb {
+                for i in lb..nb {
+                    let j = i - lb;
+                    result_b += b.impulse_response[i] * b.shift_register[j];
+                }
+            }
+        }
+
+        a.shift_offset = (oa + na - 1) % na;
+        b.shift_offset = (ob + nb - 1) % nb;
+
+        (result_a, result_b)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -774,6 +857,77 @@ mod tests {
         for i in 0..10 {
             let x = i as f32;
             assert!((conv.f(x) - x).abs() < 1e-6);
+        }
+    }
+
+    /// `f_pair` has to be two `f`s, bit for bit -- not approximately: the audio
+    /// gate compares samples, and a single ulp here is a different waveform.
+    #[test]
+    fn paired_convolution_is_bit_identical_to_two_single_convolutions() {
+        let mut seed = 0x2545f491_4f6cdd1du64;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed >> 11) as f32
+        };
+
+        // Same length, same offset: the interleaved fast path.
+        let mut single_a = ConvolutionFilter::new();
+        let mut single_b = ConvolutionFilter::new();
+        single_a.initialize(37);
+        single_b.initialize(37);
+        let mut pair_a = single_a.clone();
+        let mut pair_b = single_b.clone();
+
+        for i in 0..37 {
+            let value = next() / 1e6;
+            single_a.impulse_response_mut()[i] = value;
+            pair_a.impulse_response_mut()[i] = value;
+            let value = next() / 1e7;
+            single_b.impulse_response_mut()[i] = value;
+            pair_b.impulse_response_mut()[i] = value;
+        }
+
+        for _ in 0..500 {
+            let x = next() / 1e5;
+            let y = next() / 1e5;
+            let expected_a = single_a.f(x);
+            let expected_b = single_b.f(y);
+            let (actual_a, actual_b) = ConvolutionFilter::f_pair(&mut pair_a, x, &mut pair_b, y);
+
+            assert_eq!(actual_a.to_bits(), expected_a.to_bits());
+            assert_eq!(actual_b.to_bits(), expected_b.to_bits());
+        }
+
+        // Different lengths and therefore different wrapping points: the general
+        // path, which must agree just as exactly.
+        let mut single_a = ConvolutionFilter::new();
+        let mut single_b = ConvolutionFilter::new();
+        single_a.initialize(29);
+        single_b.initialize(41);
+        let mut pair_a = single_a.clone();
+        let mut pair_b = single_b.clone();
+
+        for i in 0..41 {
+            let value = next() / 1e6;
+            if i < 29 {
+                single_a.impulse_response_mut()[i] = value;
+                pair_a.impulse_response_mut()[i] = value;
+            }
+            single_b.impulse_response_mut()[i] = value;
+            pair_b.impulse_response_mut()[i] = value;
+        }
+
+        for _ in 0..500 {
+            let x = next() / 1e5;
+            let y = next() / 1e5;
+            let expected_a = single_a.f(x);
+            let expected_b = single_b.f(y);
+            let (actual_a, actual_b) = ConvolutionFilter::f_pair(&mut pair_a, x, &mut pair_b, y);
+
+            assert_eq!(actual_a.to_bits(), expected_a.to_bits());
+            assert_eq!(actual_b.to_bits(), expected_b.to_bits());
         }
     }
 

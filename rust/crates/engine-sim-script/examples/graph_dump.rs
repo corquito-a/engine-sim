@@ -130,6 +130,17 @@ fn main() {
 
     if execute {
         let mut program = engine_sim_script::program::Program::new(graph);
+
+        // `console_in` reads standard input, so a run that can reach one needs
+        // what the process was given -- a terminal would block here, and a gate
+        // always pipes.
+        use std::io::{IsTerminal, Read};
+        if !std::io::stdin().is_terminal() {
+            let mut text = String::new();
+            let _ = std::io::stdin().read_to_string(&mut text);
+            program.set_console_input(text);
+        }
+
         let result = program.execute();
 
         print!("{}", program.console());

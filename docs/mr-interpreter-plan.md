@@ -192,12 +192,13 @@ Each milestone is independently verifiable, and M0 is what unblocks everything.
 | M2a | ✅ | `lower` (parse tree → arena), `channel_type`, `error`; every unit of both entry points lowers and raises back field-for-field; 95 tests |
 | M2b | ✅ | done: `resolveName`/`resolveLocalName` (scope walk, unit symbols, node attributes, definition ports/body, definition-local-only), `countSymbolIncidence`, `IrContextTree` (`context.rs`: chains, `isEqual`, `isOutside`, `hasParent`, `findContext`, `getMain`/`getRoot`, `resolveDefinition`). (the reference chain itself is still only needed by `_checkReferences`/`expand`, which is M2c) |
 | M2c | ◐ | `checkCircularDefinitions` ported (E0020, with the instantiation chain) and gated by 2 fixtures; `_validate` ported (unit/node/definition checks, `validateBuiltinMappings`' `V0070`) and the **error gate is green**: 21 negative fixtures in `tools/parity/negative/` reproduce the reference's exact code multiset (`tests/error_tests.rs`). The `--resolved` gate is **green**: `tests/resolved_tests.rs` requires 660/660 (`es/engine_sim.mr`) and 701/701 (`assets/main.mr`) rows identical to `script_reference --resolved`. Covered: `_resolveDefinitions` (definition lookup with imports/visibility, port types, alias types, attribute→port), `resolveNodeDefinition`, the builtin channel-type table, `expand` (`expansion.rs`, with `m_expansions` on the arena), the reference chain (`reference.rs`, `_checkInstantiation`), and the type check (`types.rs`, `_checkTypes`). `validateBuiltinMappings` is complete (`V0070`-`V0110`, against the builtin reference nodes' ports recorded in `tools/parity/builtin_ports.txt`), gated by 21 negative fixtures. The language gate is at **`MATCH 94, DIFF 0` with nothing excluded**: the 171 unspecified-token errors (`R0010` from `IrValueLiteral::_expand` when a fixture does not define its literal builtins) are reproduced and scored, and 19 fixtures are unscorable (15 malformed, so their oracle is the bison parser this environment does not have; 4 import a file the repository does not contain). Both `checkInstantiation` entry points and `IrNode::checkReferences` are ported. The 19 unparsed fixtures are fully triaged and none is a port defect (15 are bison-reported syntax-error fixtures, 4 import a file the repository does not contain), so both the parser and the error gate are closed |
-| M3a | ◐ | **the oracle half**: `script_reference --graph` builds the node graph (`IrCompilationUnit::build`) and dumps it -- containers, nodes, ports, connections, container inputs and output references -- and `tools/parity/run_graph.py` records and checks the graph fixtures in `tools/parity/graph/` (3 scripts, 17 records). The Rust node graph itself (`Node`, `NodeOutput`, `NodeProgram`) is **not** ported yet: `build` is what it has to reproduce, and `run_graph.py` becomes the gate for it unchanged |
+| M3a | ✅ | **the oracle half**: `script_reference --graph` builds the node graph (`IrCompilationUnit::build`) and dumps it -- containers, nodes, ports, connections, container inputs and output references -- and `tools/parity/run_graph.py` records and checks the graph fixtures in `tools/parity/graph/` (3 scripts, 17 records). The Rust node graph itself (`Node`, `NodeOutput`, `NodeProgram`) is `graph.rs` + `program.rs` (M3b/M3c below), gated by `run_graph.py` unchanged |
 | M3b | ✅ | **the builder**: `graph.rs` ports `IrParserStructure::generateNode`/`generateNodeOutput`/`generateAliasNode`/`generateAliasOutput`/`generateOutput`/`connectInput`, the `.` special case of `IrBinaryOperator::_generateNode(Output)`, and the two allocators (`GraphNode`, `Port`), so `Arena::build_graph` turns resolved IR into the same containers, nodes and connections as `IrCompilationUnit::build`. `LanguageRules::generateBuiltinType` is a table of `ClassSpec`s keyed by class name — piranha's own (literals, channels, operations, negations, conversions, `NoOpNode`'s output reference, `VectorSplitNode`'s interface input) and `es_script`'s 35 (`set_*` actions, the engine objects, `impulse_response`, ...) — so it answers for `__piranha__*` and `__engine_sim__*` alike, with `NodeClass::Builtin` standing in for behaviour until M4. `graph::dump` emits the reference's record format and `examples/graph_dump` is the port's half of `run_graph.py`: **11 fixtures, 119 records**, plus every `.mr` under `assets/` — **40 scripts, 20 008 records** (`main.mr` alone is 6524), all byte-identical; the scripts are compared live rather than recorded, and `tests/graph_tests.rs` holds the fixture line without a C++ build. Details worth keeping: `addNode`'s dedupe starts at the *top level*, not the target container; a container's outputs are `m_outputReferences`, not `m_outputs`; interface nodes are vector-only, so `-` on a scalar port is correct; a factory-built node's `primaryOutput` is what `generateAliasOutput` follows, so a class without one is a node with no way back to its value. Operators (`2 * 3 + 1`, `-x`, `units().mass`) cost four more: `_expand`'s output branch must keep `build` (only the dead end clears it); `_generateNodeOutput` has interface branches of its own, not just `_generateNode`'s `generateInterface` step; `generateAliasOutput`'s last resort is `getInterfaceInput()`, a slot only `VectorSplitNode` sets, so answering with the first input's connection invents 21 resolutions in `main.mr`; and a literal's name is `%g`-formatted, not shortest-round-trip |
-| M3c | ◐ | **both gate-able halves done**. *Values*: `values.rs` is `full_compute` as a read-only walk — literals (their injected data, not the `%g` name), the four arithmetic families, negations, the conversions (`string_to_float` is `std::stringstream >>`, so a prefix and a `0.0` default), `string_add`, `NoOpNode`'s output reference, and `es_script`'s `k_28inH2O`/`k_carb` (`GasSystem`, via `engine-sim-core`); keyed on the class name after the rules prefix. *Program*: `program.rs` is `NodeProgram::initialize` plus `Node::evaluate` — top level then each container's children, early out when evaluated/evaluating, inputs first, then `_evaluate`, then output references — with the three classes whose `_evaluate` is observable (`console_out` writes, `throw_runtime_error` fails the run, `int_probe` computes and drops). Gated by `script_reference --values`/`--execute`: **3 value fixtures + 7 609 port values** across the 40 scripts of `assets/`, and **2 execute fixtures** comparing both the text written and whether the run failed, all byte-identical; `tests/value_tests.rs` and `tests/program_tests.rs` hold the same gate without a C++ build. Findings: the value layer is pull-based (nothing caches, the builtin `_evaluate`s are empty), and `+2.5` (`NoOpNode` feeding a container input) makes the original **segfault** — a node answering its own alias walk — so `build_graph` stops at the repeat (`Graph::recursion_exhausted`) instead. **Next**: M4, the `es_script` classes themselves; `checkEnabled`, `console_in`, `optimize`/`markDeadNodes` and `free` stay unported until something needs them |
+| M3c | ✅ | **both halves done**. *Values*: `values.rs` is `full_compute` as a read-only walk — literals (their injected data, not the `%g` name), the four arithmetic families, negations, the conversions (`string_to_float` is `std::stringstream >>`, so a prefix and a `0.0` default), `string_add`, `NoOpNode`'s output reference, and `es_script`'s `k_28inH2O`/`k_carb` (`GasSystem`, via `engine-sim-core`); keyed on the class name after the rules prefix. *Program*: `program.rs` is `NodeProgram::initialize` plus `Node::evaluate` — top level then each container's children, early out when evaluated/evaluating, inputs first, then `_evaluate`, then output references — with the four classes whose `_evaluate` is observable (`console_out` writes, `console_in` reads standard input, `throw_runtime_error` fails the run, `int_probe` computes and drops). Gated by `script_reference --values`/`--execute`: **3 value fixtures + 7 609 port values** across the 40 scripts of `assets/`, and **4 execute fixtures** comparing both the text written and the exit status, all byte-identical; `tests/value_tests.rs` and `tests/program_tests.rs` hold the same gate without a C++ build. Findings: the value layer is pull-based (nothing caches, the builtin `_evaluate`s are empty), and `+2.5` (`NoOpNode` feeding a container input) makes the original **segfault** — a node answering its own alias walk — so `build_graph` stops at the repeat (`Graph::recursion_exhausted`) instead. **Next**: M4, the `es_script` classes themselves. All four leftovers are resolved (§8.6): `console_in` ported and gated, `checkEnabled` proven unreachable, `optimize`/`markDeadNodes` measured to change nothing, `free` a drop |
 | M4 | ✅ | **the engine, built from the script and simulated by the port**. `build.rs` is `EngineNode::buildEngine` and every `generate` under it: the counts, the fuel, the mean-piston-speed curve, the crankshafts and their rod-journal indices, the banks with their pistons and rods (a slave rod taking its master's crankshaft), the heads with their camshafts, lobe centrelines and port-flow curves, the intakes, the exhausts, the ignition module's posts resolved through the bank cylinder indices, and the chambers. `trace.rs` + `examples/script_trace.rs` put that engine in the application's default vehicle and transmission and emit `traceFrames`' 33 fields per frame, so the `RUN` gate is now two-sided: `script_reference --run` against the recorded fixture, and the port's own engine against the reference -- **all 16 263 lines identical**, physics, gas dynamics, synthesizer input and rendered audio. `graph_dump --engine` covers the parameters on their own (98 lines), `tests/run_tests.rs` the same trace without a C++ build, and `tests/engine_tests.rs` the wiring of every engine input. The drivetrain was the last M4 gap and is now closed (§8.5): `build::simulator` builds the script's own `vehicle` and `transmission` through `objects.rs`'s `TransmissionData`, `add_gear`, `set_vehicle`/`set_transmission`, falling back **per object** to the application's pair exactly as `EngineSimApplication::loadScript` does. **M5 is done**: see the row below. **Widened past `main.mr`:** `tools/parity/engines/` holds one wrapper per engine asset that builds one -- 20 of them, from a Honda TRX520 single and a five-cylinder Audi to a Merlin V12 and a nine-cylinder radial -- each imported and `main()`ed so the same `--run` trace can be taken, and all 20 are byte-identical to the original (`PASS: 20 engines`, 15 339–21 672 lines each). What they found that one engine could not: an **exhaust index** that `build.rs` never stamped, so every exhaust wrote into staging slot 0 (2 461 differing lines on the 2JZ); `__engine_sim__add_slave_journal` registered as a class but unported, so a radial's slave journals never told their rod's master, and every rod rode a journal with no crankshaft; and the `std::set` of pointers behind the intake/exhaust order, which is allocation order -- node-id order -- and only shows itself on an engine with **two** exhaust systems of different lengths (the LFA V10, the Merlin, the 412 T2) |
 | M5 | ✅ | **the audio the script asks for**. `objects.rs`'s `ImpulseResponseData` is `ImpulseResponseNode::generate`: the filename resolved against the directory of the *unit that wrote the node* (`paths.rs` is `parent_path() / filename`, one of the two path rules a script can reach) and the volume the node asked for. `wav.rs` is `ysWindowsAudioWaveFile` without `mmio` -- walk the chunks, take `blockAlign / channels * 8` for the bit depth and `dataSize / blockAlign` for the frame count, and hand the synthesizer the first `frames` little-endian `int16`s, which is exactly what `EngineSimApplication::loadScript` passes it. `build` now returns `BuiltEngine` (the engine plus one response per exhaust) and `simulator` installs each file at its own volume, falling back to the deterministic table only for an exhaust that names none -- so the `RUN` gate's audio is a convolution over the real samples: **16 265 lines identical**, and the 1 376 `audio*` values the synthetic table used to produce all move. Three gates: the header's two new lines per exhaust (`exhaust<i>_impulse_response` and `..._volume`, 98 lines now), the `OBJECTS` gate's `impulse_response_filename`/`_volume` records for all ten library nodes, and `WAVE` -- `script_reference --wave` against `examples/wave_dump` on all **10 wave files**, channels, rate, bits, frames and an FNV-1a hash over every sample identical. The filename a dump prints is the repository-relative form, because the object holds the absolute one (the units are absolute) and a fixture that pinned a checkout directory would be worth nothing |
 | M6 | ✅ | **the application without the window**. `crates/engine-sim-cli` parses a command line, resolves and executes the script through the port's own front end (`resolve::program` is that whole pipeline in one call: load, lower, rules, imports, definitions, circularity, expansion, `Program::new`), builds the simulator, and then runs `EngineSimApplication`'s frame loop -- `start_frame`, `simulate_step` until it returns false, `end_frame`, `render_audio_block`, `read_audio_output` -- until it has produced the requested seconds *of audio*, because a frame is not exactly `1/fps` of engine time (the latency controller scales it by 1.1/0.9, so a fixed frame count runs 2.20 s for every 2 s asked). Output is a 44.1 kHz 16-bit mono wave file and one CSV row per frame (`frame,time_s,rpm,vehicle_kmh,crank_rad_s,throttle,dyno_torque_nm,dyno_power_w,exhaust_pa,chamber0_pa,audio_samples`), plus a summary. `--gear`/`--shift`/`--clutch` are the driver's controls (§8.5). Three behaviours are the application's, not the engine's, and the CLI has to reproduce them: the audio is always rendered, because the synthesizer shares its random sequence with combustion; the starter is released after `--starter` seconds, because its velocity constraint otherwise holds the crank at the starter's speed forever; and the ignition is switched on, because `IgnitionModule` is built disabled and nothing but the `A` key ever enables it. `--no-starter`/`--no-ignition` reach the old behaviour. The gate is `DRIVEN` (see below) plus `tests/cli_tests.rs`: 7 integration tests over the binary's contract (usage, `--help`, unknown option, throttles and gears out of range, the wave file's header and length, the CSV's shape) and one that pins the ignition default by requiring the engine to idle after the starter lets go, and to stop without it |
+| M7 | ◐ | **breadth and performance**, M6's engine in the application's own terms. *Breadth*: `RUNNING` puts all 20 engine assets on the road instead of the one `main.mr` and the three `DRIVE` drives -- 8 000 frames each, ignition on, wide open, free-revving -- and they are identical checkpoint for checkpoint (305 699 to 429 338 lines each); 11 of them fire inside that window and 9 do not, which the gate reports rather than requires, because a starter that cannot turn a Merlin in 0.3 s is a fact about the engine, not a divergence. *Performance*: `tools/parity/measure_performance.sh` asks both sides how fast they render, using the loop's clock rather than the process's (§8.7) -- the port renders **1.30 x real time** against the original's 1.13 x, every asset above 1.0 x, and the slowest (the nine-cylinder radial) at 1.02 x. Two changes bought that: the two-channel convolution runs as one pass (`ConvolutionFilter::f_pair`, bit-identical by construction) and `write_to_synthesizer` stopped cloning the cylinder head per cylinder per step. **Next**: the app shell (window, render, UI), the only unported part left |
 
 Two deviations from the plan, both forced by the missing toolchain:
 
@@ -424,3 +425,117 @@ comparison cannot catch a mistake made identically on both sides, which is why i
 survived until an engine was asked to move a car. Corrected on both sides, wide
 open from the starter takes the EJ25 to 6855 rpm, and `DRIVEN` now compares a
 running engine at wide-open throttle rather than a coasting one.
+
+### 8.6 The runtime's four leftovers, resolved
+
+M3 closed with four things in piranha deliberately unported, "until something
+needs them". Nothing does, and the evidence is worth keeping, because three of the
+four are *unreachable* rather than merely unused.
+
+**`checkEnabled` / `isEnabled` — dead.** `Node::evaluate` starts with
+`if (!checkEnabled()) return false; if (!isEnabled()) return true;`, which looks
+like a real gate. But `checkEnabled` only returns false from an override, and the
+only thing that can *disable* a node is `m_enableInput`, which is set by
+`connectEnableInput` — called **nowhere in the repository** (piranha, `es_script`,
+`scripting/` or the application) — and nothing outside piranha overrides
+`checkEnabled` either. Every node is therefore enabled, `checkEnabled` returns
+true, and the guard is a no-op for every graph this program can build. The port's
+`evaluate` is `Node::evaluate` without that guard, which is the same function.
+
+**`console_in` — ported.** It *is* a registered builtin (`builtin,
+__piranha__console_in` in the recorded port table, `prompt` → `raw_input`), so a
+script can use it, and piranha's own demos do. `ConsoleInputNode::_evaluate` writes
+the prompt, reads one whitespace-delimited word with `std::cin >> std::string`, and
+stores it in the output — the one value in the graph that is not a function of its
+inputs. That last part is what made it more than an arm in a `match`: the port's
+`values.rs` computes values by walking the graph, so `Graph` now carries the values
+a running node wrote into its own output (`Graph::outputs`) and `node_value` reads
+them before the walk, exactly as `fullCompute` reads an output's data. Gated by a
+new fixture, `tools/parity/execute/reads.mr` with `reads.stdin` beside it: two
+`console_in` instances have to take successive words, the prompts have to reach the
+output where the node runs, and the text has to match the original's byte for byte
+(`name: > alice!?  and bob`).
+
+**`optimize` / `markDeadNodes` — measured, not ported.** `NodeProgram::optimize`
+folds constant operands into literals (`OperationNode::_optimize` replaces itself
+with a `DefaultLiteralNode`) and prunes actionless nodes nothing reads. It is real
+work — and nothing in this program calls it: not `Compiler::build`, not
+`loadScript`, not the frame loop. Porting it would be porting a path the
+application cannot reach, so the new `OPTIMIZE` gate measures the claim instead:
+`PARITY_OPTIMIZE=1` makes the reference call it between `initialize` and `execute`,
+and the gate requires the same 98-line engine header and the same 16 265-line trace
+for every wrapper in `tools/parity/engines/` and `assets/main.mr`, plus the same
+text and exit status for every execute fixture. **28 runs, all identical.**
+Constant folding computes the constants the walk would; pruning removes only nodes
+whose only effect was their value.
+
+**`free` — nothing to port.** `NodeProgram::free` walks the node cache and
+`delete`s what the program allocated; `es_script::Compiler::free` calls it. Rust
+drops the graph, and there is no allocator to return to.
+
+The point of recording it: those four were listed as "not ported" for several
+milestones, which reads like debt. Saying *why* each one is not a gap — dead code,
+measured-irrelevant, or a language difference — is what closes the list.
+
+### 8.7 Real time, and the two things that were slow
+
+The port had no answer to "how fast is it", so the first job was to build the
+instrument, and the first version of the instrument was wrong in a way worth
+remembering. It timed the *process* on both sides. The original's `--bench` runs
+the frame loop and prints its own clock, but the port's column included loading
+the script, building the engine and decoding the impulse responses -- and for the
+nine-cylinder radial that is 4.0 s of setup in front of a 2.0 s loop. The table
+therefore said the port was 2.4x slower than the original on the one engine it
+was least true of, and the conclusion "the convolution needs rewriting" would have
+been drawn from an instrument measuring the wrong thing.
+
+`measure_performance.sh` now reports both columns separately: the loop each side
+measures itself (`timing,<frames>,<samples>,<seconds>` from `engine-sim-cli
+--timing`; `bench,<frames>,<samples>,<seconds>` from `script_reference --bench`)
+and the setup the shell times around the process. Both stop by the same rule
+(once `seconds * 44100` samples exist), so they render the same audio, and both
+report the same 109 frames and 88 207 samples for two seconds of `main.mr`.
+
+| | port | original |
+|---|---|---|
+| `main.mr`, 2 s of audio | 1.55 s loop, 0.51 s setup | 1.53 s loop, 0.79 s setup |
+| nine-cylinder radial, 2 s | 1.96 s loop, 4.00 s setup | 2.24 s loop, 5.41 s setup |
+| all 21 assets | **1.30 x real time** | 1.13 x real time |
+| slowest asset | 1.02 x (the radial) | 0.89 x (the radial) |
+
+Every asset renders at or above real time, and the port is faster than the
+original on 15 of the 21. The shape of the cost is not a port defect: 44 100
+samples a second through a **10 000-tap impulse response** is 441 M multiply-adds
+per channel per second of audio, because `ConvolutionFilter::f` is the direct
+convolution the original writes, and the impulse responses are clipped to exactly
+10 000 samples. The sum has to be accumulated in order -- reordering it is what an
+FFT or a partitioned convolution would do, and a single ulp of difference is a
+different waveform -- so the algorithm is fixed and only the machine's ability to
+overlap work is left.
+
+Two things were available inside that constraint.
+
+**The two channels' convolutions are independent.** `render_audio` rendered
+channel 0's 10 000 dependent adds to completion and then channel 1's, which leaves
+the second one waiting on a chain whose latency, not throughput, sets the pace.
+`ConvolutionFilter::f_pair` interleaves the two chains in one pass. Each filter
+keeps its own shift register, offset and order of summation, so the pair of
+results is bit-identical to two `f()` calls -- that is asserted over 1 000 samples
+in two configurations, including different lengths wrapping at different points --
+and the pair is 1.6x the work per second in isolation (1.63 to 2.61 G multiply-adds
+per second). In the application that is 19% off the radial's loop and 22% off the
+412 T2's; engines with one exhaust system take the old path unchanged.
+
+**`write_to_synthesizer` cloned the cylinder head, per cylinder, per step.** The
+clone is a borrow-checker workaround: four `Arc`s and a `Vec` of per-cylinder
+records, to read one exhaust index, one length, one volume and one attenuation.
+Splitting the loop into an immutable read of everything and a mutable step of the
+delay filter afterwards removes it. On the radial that is the difference between a
+2.4 s loop and a 2.0 s one.
+
+What the measurement does *not* say is that the setup cost is fine. 0.4-0.7 s to
+load a script and build an engine is invisible in a command line and would be
+visible in an application that opens a script on a click; the radial's 4.0 s is
+the script->engine build itself (`es/engine_sim.mr` plus nine cylinders of
+valvetrain functions), the original spends 5.4 s on the same work, and neither
+number is something this gate can improve.

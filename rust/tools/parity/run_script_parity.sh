@@ -34,6 +34,22 @@
 #          gear ratios, the clutch's limit, the car's mass and drag -- reaches
 #          the trace either way.
 #
+#   OPTIMIZE `NodeProgram::optimize` -- constant folding plus dead-node pruning --
+#          which the application never calls and the port therefore does not
+#          have. Every script that builds an engine, and every execute fixture,
+#          has to run identically with and without it, which is what makes
+#          leaving it out safe rather than merely convenient.
+#
+#   OPTIMIZE `NodeProgram::optimize` -- constant folding plus dead-node pruning --
+#          which the application never calls and the port therefore does not
+#          have. Every script that builds an engine, and every execute fixture,
+#          has to run identically with and without it, which is what makes
+#          leaving it out safe rather than merely convenient.
+#
+#   RUNNING every engine asset with the keys pressed: ignition on, the starter
+#          released after 0.3 s, wide open, free-revving, 8 000 frames -- all
+#          20 engines rather than the three `DRIVE` takes to two seconds.
+#
 #   GRAPH  every script in `tools/parity/graph/` is built into a node graph by
 #          the original (`IrCompilationUnit::build`) and compared against the
 #          recorded structure. The Rust node graph is what has to reproduce it.
@@ -70,6 +86,10 @@
 #          decides; the simulation trace below is what the engine then does.
 #
 # Requires the staged reference at $REF_SCRIPT (default /tmp/refscript).
+#
+# Not a gate: `measure_performance.sh` is the same tree asked how *fast* it
+# renders (real-time factor, port against original). Nothing here fails on a
+# clock; see `docs/mr-interpreter-plan.md` §8.7.
 set -euo pipefail
 
 KEEP="${1:-}"
@@ -276,15 +296,18 @@ fi
 echo "== gate DRIVE: the script's own vehicle and transmission =="
 drive_one() {
     local name="$1" script="$2" ir="$3"
+    local steps="${4:-$DRIVEN_STEPS}"
 
-    PARITY_STEPS="$DRIVEN_STEPS" PARITY_THROTTLE=1 PARITY_STARTER_SECONDS=1 PARITY_IGNITION=1 \
-        PARITY_GEAR=1 PARITY_CLUTCH=1 \
+    PARITY_STEPS="$steps" PARITY_THROTTLE=1 PARITY_IGNITION=1 \
+        PARITY_STARTER_SECONDS="${DRIVE_STARTER:-1}" \
+        ${DRIVE_GEAR:+PARITY_GEAR=$DRIVE_GEAR} ${DRIVE_CLUTCH:+PARITY_CLUTCH=$DRIVE_CLUTCH} \
         "$SCRIPT_TRACE" "$script" > "$WORK/$name.port.trace" 2> "$WORK/$name.port.err" \
         || { echo "FAIL: the port could not drive $script"; head -20 "$WORK/$name.port.err"; exit 1; }
 
-    PARITY_STEPS="$DRIVEN_STEPS" PARITY_THROTTLE=1 PARITY_STARTER_SECONDS=1 PARITY_IGNITION=1 \
-        PARITY_GEAR=1 PARITY_CLUTCH=1 \
-        "$WORK/script_reference" --run "$script" "$ir" "$DRIVEN_STEPS" \
+    PARITY_STEPS="$steps" PARITY_THROTTLE=1 PARITY_IGNITION=1 \
+        PARITY_STARTER_SECONDS="${DRIVE_STARTER:-1}" \
+        ${DRIVE_GEAR:+PARITY_GEAR=$DRIVE_GEAR} ${DRIVE_CLUTCH:+PARITY_CLUTCH=$DRIVE_CLUTCH} \
+        "$WORK/script_reference" --run "$script" "$ir" "$steps" \
             > "$WORK/$name.trace" 2> "$WORK/$name.err" \
         || { echo "FAIL: the oracle could not drive $script"; head -20 "$WORK/$name.err"; exit 1; }
 
@@ -313,6 +336,41 @@ drive_one drive_mixed "$DRIVE_MIXED" "$WORK/drive_mixed.ir"
 DRIVE_FALLBACK="$HERE/engines/drivetrain_from_application.mr"
 "$IR_DUMP" "$DRIVE_FALLBACK" > "$WORK/drive_fallback.ir"
 drive_one drive_fallback "$DRIVE_FALLBACK" "$WORK/drive_fallback.ir"
+
+# Every engine asset, running. `ENGINES` runs all 22 with the starter held and the
+# ignition off -- one firing cycle short of an engine -- and `DRIVE` runs three of
+# them for two seconds. This one gives every engine a spark and a wide-open
+# throttle for 6 000 frames (the starter lets go after a second), so a wrong
+# firing order, a wrong advance curve or a `rand()` consumed out of order has to
+# show up on the engine it belongs to rather than only on the three in `DRIVE`.
+# Free-revving, because in gear an engine that starts from rest spends the whole
+# window being dragged round at cranking speed: `chamber_lit` stays zero and the
+# gate would be measuring the clutch. Eleven of these fire inside 0.8 s of audio
+# and nine do not -- the Merlin's starter cannot turn it at all in that time -- and
+# both states are worth comparing, so the count is reported rather than required.
+echo "== gate RUNNING: every engine asset, cranking to running =="
+RUNNING_STEPS=8000
+DRIVE_STARTER=0.3
+DRIVE_GEAR=
+DRIVE_CLUTCH=
+running_count=0
+running_fired=0
+
+for wrapper in "$HERE"/engines/engines_*.mr; do
+    "$IR_DUMP" "$wrapper" > "$WORK/running.ir" 2>/dev/null || continue
+    drive_one "running_$(basename "$wrapper" .mr)" "$wrapper" "$WORK/running.ir" "$RUNNING_STEPS"
+    running_count=$((running_count + 1))
+    trace="$WORK/running_$(basename "$wrapper" .mr).trace"
+    # one process, not a pipe: under `pipefail` a satisfied `grep -q` is a SIGPIPE
+    # for the first grep and the pipeline reports failure
+    if awk -F, '$2 == "chamber_lit" && $3 != "0000000000000000" { found = 1 } END { exit !found }' "$trace"; then
+        running_fired=$((running_fired + 1))
+    fi
+done
+
+unset DRIVE_STARTER DRIVE_GEAR DRIVE_CLUTCH
+
+echo "-- $running_count engines, every checkpoint identical; $running_fired of them fire inside the window"
 
 # The node graph the IR generates: every fixture, plus every script under
 # `assets/`, against a live reference (`--record` rewrites the fixtures).
@@ -385,6 +443,68 @@ if ! diff -q "$WORK/engine.ref" "$HERE/engine/main.engine" > /dev/null; then
     exit 1
 fi
 echo "PASS: $(( $(wc -l < "$WORK/engine.ref") )) engine header lines identical, and the recorded fixture still holds"
+
+# The optimizer. `NodeProgram::optimize` folds constant operands into literals and
+# prunes actionless nodes nothing reads; the application never calls it, so the
+# port does not have it. That is only safe if it changes nothing the application
+# can see, and this measures the claim instead of assuming it: every script that
+# builds an engine has to produce the same 98-line header with and without it, and
+# `assets/main.mr` the same trace.
+echo "== gate OPTIMIZE: the optimizer the application never runs =="
+optimize_failures=0
+optimize_runs=0
+
+# The execute fixtures are piranha's own, so they need piranha's rules; a fixture
+# with a `.stdin` beside it (`reads.mr`) is fed it on both runs.
+compare_optimized() {
+    local script="$1" mode="$2" ir="$3" name="$4" rules="${5:-engine-sim}"
+    local stdin_path="${script%.*}.stdin"
+    [ -f "$stdin_path" ] || stdin_path=/dev/null
+
+    # A run that is *meant* to fail (`throws.mr`) is a result, not an error, so the
+    # exit status is compared rather than required to be zero.
+    local plain_status=0 folded_status=0
+
+    env "PARITY_RULES=$rules" "$WORK/script_reference" "$mode" "$script" "$ir" \
+        > "$WORK/opt.plain" 2> "$WORK/opt.err" < "$stdin_path" || plain_status=$?
+
+    env "PARITY_RULES=$rules" PARITY_OPTIMIZE=1 "$WORK/script_reference" "$mode" "$script" "$ir" \
+        > "$WORK/opt.folded" 2> "$WORK/opt.err" < "$stdin_path" || folded_status=$?
+
+    if [ "$plain_status" -ne "$folded_status" ]; then
+        echo "FAIL: $name exits $plain_status without the optimizer and $folded_status with it"
+        optimize_failures=$((optimize_failures + 1))
+        return
+    fi
+
+    if ! diff -q "$WORK/opt.plain" "$WORK/opt.folded" > /dev/null; then
+        echo "FAIL: $name changes when the optimizer runs"
+        diff "$WORK/opt.plain" "$WORK/opt.folded" | head -10
+        optimize_failures=$((optimize_failures + 1))
+        return
+    fi
+
+    optimize_runs=$((optimize_runs + 1))
+}
+
+compare_optimized assets/main.mr --engine "$WORK/main.ir" "assets/main.mr"
+compare_optimized assets/main.mr --run "$WORK/main.ir" "assets/main.mr's trace"
+
+while IFS= read -r wrapper; do
+    "$IR_DUMP" "$wrapper" > "$WORK/opt.ir" 2>/dev/null || continue
+    compare_optimized "$wrapper" --engine "$WORK/opt.ir" "$(basename "$wrapper")"
+done < <(find "$HERE/engines" -name '*.mr' | sort)
+
+for fixture in "$HERE"/execute/*.mr; do
+    "$IR_DUMP" "$fixture" > "$WORK/opt.ir" 2>/dev/null || continue
+    compare_optimized "$fixture" --execute "$WORK/opt.ir" "$(basename "$fixture")" test
+done
+
+if [ "$optimize_failures" -ne 0 ]; then
+    echo "FAIL: the optimizer changes $optimize_failures run(s)"
+    exit 1
+fi
+echo "PASS: $optimize_runs runs are identical with and without the optimizer"
 
 # The audio the traces run on: the impulse responses, decoded both sides.
 echo "== gate WAVE: the impulse responses =="

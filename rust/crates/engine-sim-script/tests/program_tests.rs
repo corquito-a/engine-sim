@@ -46,6 +46,12 @@ fn recording(path: &Path) -> (String, String) {
     }
 }
 
+/// A `<name>.stdin` beside the script is what `console_in` reads; the gate feeds
+/// both sides the same bytes from the same file.
+fn fixture_stdin(script: &Path) -> String {
+    std::fs::read_to_string(script.with_extension("stdin")).unwrap_or_default()
+}
+
 fn run(script: &Path) -> (String, String) {
     let graph = load_graph(&script.to_string_lossy(), &[]).expect("loads");
 
@@ -57,6 +63,8 @@ fn run(script: &Path) -> (String, String) {
     arena.expand_all();
 
     let mut program = Program::new(arena.build_graph());
+    program.set_console_input(fixture_stdin(script));
+
     let result = program.execute();
 
     let status = match result {
@@ -88,5 +96,5 @@ fn every_execute_fixture_writes_what_the_reference_writes() {
         checked += 1;
     }
 
-    assert_eq!(checked, 3, "every execute fixture is checked");
+    assert_eq!(checked, 4, "every execute fixture is checked");
 }

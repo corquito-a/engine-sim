@@ -115,6 +115,17 @@ def graph_from_port(fixture, rules="piranha", values=False):
     return port.stdout, None
 
 
+def fixture_stdin(fixture):
+    """What `console_in` reads: a `<name>.stdin` beside the script, or nothing.
+
+    The application never hands a script standard input, but the piranha rules
+    register `console_in`, so a fixture that uses it needs both sides fed the same
+    bytes rather than whatever the terminal happens to hold.
+    """
+    path = fixture.with_suffix(".stdin")
+    return path.read_text() if path.exists() else ""
+
+
 def execute_from_reference(fixture, test_rules=True):
     """The original's run: its own `initialize` and `execute`."""
     dumped = run([str(IR_DUMP), str(fixture)], cwd=str(REPO))
@@ -125,7 +136,12 @@ def execute_from_reference(fixture, test_rules=True):
     dump.write_text(dumped.stdout)
 
     env = dict(os.environ, PARITY_RULES="test" if test_rules else "engine-sim")
-    result = run([str(REFERENCE), "--execute", str(fixture), str(dump)], env=env, cwd=str(REPO))
+    result = run(
+        [str(REFERENCE), "--execute", str(fixture), str(dump)],
+        env=env,
+        cwd=str(REPO),
+        input=fixture_stdin(fixture),
+    )
 
     message = result.stderr.strip().splitlines()[0] if result.stderr.strip() else ""
     return (result.stdout, result.returncode == 0, message), None
@@ -134,7 +150,9 @@ def execute_from_reference(fixture, test_rules=True):
 def execute_from_port(fixture, rules="piranha"):
     """The port's run, from its own graph."""
     result = run(
-        [str(GRAPH_DUMP), "--execute", f"--rules={rules}", str(fixture)], cwd=str(REPO)
+        [str(GRAPH_DUMP), "--execute", f"--rules={rules}", str(fixture)],
+        cwd=str(REPO),
+        input=fixture_stdin(fixture),
     )
 
     message = result.stderr.strip().splitlines()[0] if result.stderr.strip() else ""

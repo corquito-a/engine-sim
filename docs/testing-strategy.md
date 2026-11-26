@@ -1562,3 +1562,83 @@ lesson is the one this document opened with, from the other end: an oracle only
 gates what it *also* implements, and an option that names a behaviour (here,
 `PARITY_THROTTLE=1`) has to be checked against that behaviour, not just against
 the other implementation.
+
+## The runtime's leftovers: one gate, one port, two measurements
+
+The script runtime closed with four piranha features deliberately unported. Three
+turned out not to need porting, and each one needed a different kind of evidence.
+
+**`console_in` needed a port and a fixture with two inputs.** It is the only node
+whose value is not a function of its inputs: `_evaluate` prints a prompt, reads a
+whitespace-delimited word from `std::cin`, and stores it. The port's value layer is
+a pure walk over the graph, so the fix is not an arm in a `match` but a place for
+values that a run wrote into its own output (`Graph::outputs`, read by `node_value`
+before the walk). The gate is `tools/parity/execute/reads.mr` plus `reads.stdin`,
+because a fixture that reads a *different* word on each side is no fixture at all:
+`run_graph.py` and `tests/program_tests.rs` hand both sides the same bytes. What it
+pins is `name: > alice!?  and bob` — the prompts in the order the nodes run, and
+two instances taking successive words rather than both taking the first.
+
+**`checkEnabled` needed a negative result, not code.** `Node::evaluate` begins with
+`checkEnabled()`/`isEnabled()`, so a reader would expect it to matter. It cannot:
+`m_enableInput` is set by `connectEnableInput`, which nothing in the repository
+calls, and nothing outside piranha overrides `checkEnabled`. Every node is enabled,
+so the guard is a no-op on every graph this program can build. Porting it would add
+code that can never change a result, and the honest record is the grep, not an
+implementation.
+
+**`optimize` needed a measurement, because it is real work.** `NodeProgram::optimize`
+folds constant operands into literals and prunes actionless dead nodes — exactly
+the kind of thing that *could* change what a run produces. Nothing in the
+application calls it. Rather than assert that it is safe to skip, the oracle grew
+`PARITY_OPTIMIZE=1` (call it between `initialize` and `execute`) and a new
+`OPTIMIZE` gate runs every engine wrapper, `assets/main.mr` and every execute
+fixture with and without it, requiring identical output *and* identical exit status:
+**28 runs, every one identical**, down to the 16 265-line trace. The claim "the
+optimizer is behaviour-preserving" is now measured on this corpus rather than
+assumed, and if a future script ever made it observable the gate would say so.
+
+`free` needed nothing: the original frees its node cache by hand, and Rust drops it.
+
+The general shape, which this document keeps rediscovering from different angles:
+for an unported feature, "unused" is a claim that has to be produced like any other
+— by grep for unreachability, by a fixture for behaviour, or by a gate for
+equivalence — and each of the three is cheaper than porting code that cannot matter.
+
+## Measuring speed without gating on it
+
+Real-time factor is the one number here that is a *measurement*, not a pass or a
+fail: it depends on the machine, and a gate that fails when a shared runner is
+busy teaches people to ignore gates. `tools/parity/measure_performance.sh` prints
+a table and fails only below a floor (0.25x, a three-times regression).
+
+Getting the number right took two tries, and the mistake is the interesting part.
+The first version timed the whole process on both sides. The original has a mode
+(`--bench`) that runs the frame loop with every `emit` removed and prints its own
+clock, so its column was the loop; the port's column was the loop *plus* loading
+the script, building the engine and decoding the impulse responses. On the
+nine-cylinder radial that is 4.0 s of setup in front of a 2.0 s loop, and the
+table reported the port as 2.4x slower than the original when it is in fact
+faster. The fix was to make both sides report their own loop and let the shell
+time the rest, and to print setup as its own column — where it turns out to be
+interesting on its own terms (0.4-0.7 s typically, 4 s for the radial, against
+the original's 5.4 s).
+
+Two lessons that generalise:
+
+* **Time what you mean.** "How fast does it render" and "how long until there is
+  audio" are different questions with different answers, and a column that mixes
+  them will be read as whichever one the reader had in mind.
+* **A measurement needs the same proof as a gate.** Both sides must do the same
+  work: same stopping rule (the loop ends once the requested number of samples
+  exists), same audio (88 207 samples each), and the same absence of output work.
+  Here the two tools print the same `frames, samples` numbers and that is how the
+  error was caught.
+
+The performance work itself stayed inside the bit-exactness constraint, which is
+what makes it interesting: the convolution's summation order cannot change, so
+the only wins available are the ones that keep every chain's order and give the
+machine two chains to overlap instead of one — see `docs/mr-interpreter-plan.md`
+§8.7. Any "optimisation" that reorders the additions has to be rejected by the
+`WAVE` and `RUN` gates, and it is worth checking that they would: `WAVE` compares
+every sample of ten impulse responses, and the traces carry the audio.
