@@ -15,6 +15,7 @@
 //! the two `es_script` node classes whose value is a `GasSystem` calculation
 //! (`k_28inH2O`, `k_carb`) and would otherwise be a copy of the engine.
 
+pub mod build;
 pub mod builtin_types;
 pub mod channel_type;
 pub mod circular;
@@ -36,6 +37,7 @@ pub mod program;
 pub mod reference;
 pub mod resolve;
 pub mod resolved;
+pub mod trace;
 pub mod types;
 pub mod validate;
 pub mod values;

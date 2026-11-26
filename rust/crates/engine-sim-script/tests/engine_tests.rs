@@ -8,44 +8,18 @@
 //! wrong: a script that builds no engine prints nothing, and the displacement
 //! fields are zero until the application calls `calculateDisplacement`.
 
+mod support;
+
 use engine_sim_script::engine_dump;
-use engine_sim_script::lower::Arena;
-use engine_sim_script::program::Program;
-use engine_sim_script::resolve::load_graph;
-use engine_sim_script::Rules;
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-/// The repository root, which is where `assets/` and the search paths live.
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
-}
-
-/// `rust/tools/parity`, where the recorded header lives.
-fn parity_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/parity")
-}
-
-fn build(script: &Path) -> Program {
-    let search = repo_root().join("es/");
-    let search = search.to_string_lossy().to_string();
-    let graph =
-        load_graph(&script.to_string_lossy(), &[search.as_str()]).expect("the script loads");
-
-    let mut arena = Arena::lower(&graph.units);
-    arena.set_rules(Rules::EngineSim);
-    arena.link_imports(&graph.imports);
-    arena.resolve_all_definitions();
-    arena.check_circular_definitions_all();
-    arena.expand_all();
-
-    Program::new(arena.build_graph())
-}
+use support::{build_program, parity_dir, repo_root};
 
 #[test]
 fn the_engine_main_mr_configures_matches_the_recorded_header() {
     let script = repo_root().join("assets/main.mr");
-    let mut program = build(&script);
+    let mut program = build_program(&script);
     program.execute().expect("assets/main.mr runs");
 
     let expected = std::fs::read_to_string(
@@ -75,7 +49,7 @@ fn the_engine_main_mr_configures_matches_the_recorded_header() {
 #[test]
 fn a_script_without_an_engine_has_no_header() {
     let script = parity_dir().join("execute/groups.mr");
-    let mut program = build(&script);
+    let mut program = build_program(&script);
     program.execute().expect("the fixture runs");
 
     assert!(engine_dump::dump(&mut program).is_empty());
@@ -95,7 +69,7 @@ fn a_script_without_an_engine_has_no_header() {
 fn every_engine_input_reaches_the_field_it_names() {
     let script = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/engine_fixtures/minimal.mr");
-    let mut program = build(&script);
+    let mut program = build_program(&script);
     program.execute().expect("the fixture runs");
 
     let lines: Vec<String> = engine_dump::dump(&mut program);

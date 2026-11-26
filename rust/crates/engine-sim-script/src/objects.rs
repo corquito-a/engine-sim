@@ -163,6 +163,22 @@ pub struct EngineContext {
     exhausts: BTreeMap<usize, ExhaustData>,
     heads: BTreeMap<usize, HeadData>,
     ignition_modules: BTreeMap<usize, IgnitionModuleData>,
+    camshafts: BTreeMap<usize, CamshaftData>,
+    valvetrains: BTreeMap<usize, ValvetrainData>,
+    throttles: BTreeMap<usize, ThrottleData>,
+
+    /// `IgnitionWireNode::m_connections`: the `(bank, local index)` pairs
+    /// `add_cylinder` hangs on a wire, in order.
+    ignition_wires: BTreeMap<usize, Vec<(usize, usize)>>,
+
+    /// `EngineContext::m_cylinderIndices`.
+    cylinder_indices: BTreeMap<(usize, usize), i32>,
+
+    /// `EngineContext::m_rodJournals`: the index a journal answers with.
+    rod_journal_indices: BTreeMap<usize, i32>,
+
+    /// `ConnectingRodNode::m_rodJournals`, in order.
+    rod_slave_journals: BTreeMap<usize, Vec<usize>>,
 }
 
 /// `RodJournalNode`'s `m_angle`, plus the crankshaft and rod the actions stamp
@@ -187,10 +203,18 @@ pub struct CylinderRefs {
     pub primary_length: f64,
 }
 
-/// `CylinderBankNode`'s own state: its cylinders, and the head `set_cylinder_head`
-/// gave it. The six `CylinderBank::Parameters` numbers stay on the node.
+/// `CylinderBankNode`'s own state: its six `CylinderBank::Parameters` numbers,
+/// the cylinders `add_cylinder` gave it, and the head `set_cylinder_head` gave
+/// it.
 #[derive(Clone, Debug, Default)]
 pub struct BankData {
+    pub angle: f64,
+    pub bore: f64,
+    pub deck_height: f64,
+    pub position_x: f64,
+    pub position_y: f64,
+    pub display_depth: f64,
+
     pub cylinders: Vec<CylinderRefs>,
     pub head: Option<usize>,
 }
@@ -237,6 +261,42 @@ pub struct HeadData {
     pub intake_port_flow: Option<usize>,
     pub exhaust_port_flow: Option<usize>,
     pub valvetrain: Option<usize>,
+}
+
+/// `CamshaftNode`'s `Camshaft::Parameters`, plus the lobes `add_lobe` hangs on
+/// it. The lobe profile is the function node it names.
+#[derive(Clone, Debug, Default)]
+pub struct CamshaftData {
+    pub advance: f64,
+    pub base_radius: f64,
+    pub lobe_profile: Option<usize>,
+    pub lobes: Vec<f64>,
+}
+
+/// `StandardValvetrainNode` and `VtecValvetrainNode`. Both name camshaft nodes;
+/// `generate` is what turns them into a `Valvetrain`.
+#[derive(Clone, Debug)]
+pub enum ValvetrainData {
+    Standard {
+        intake_camshaft: Option<usize>,
+        exhaust_camshaft: Option<usize>,
+    },
+    Vtec {
+        intake_camshaft: Option<usize>,
+        exhaust_camshaft: Option<usize>,
+        vtec_intake_camshaft: Option<usize>,
+        vtec_exhaust_camshaft: Option<usize>,
+        min_rpm: f64,
+        min_speed: f64,
+        min_throttle_position: f64,
+        manifold_vacuum: f64,
+    },
+}
+
+/// `direct_throttle_linkage`'s one input.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ThrottleData {
+    pub gamma: f64,
 }
 
 /// `IgnitionModuleNode`'s own state: its parameters plus the posts
@@ -407,6 +467,10 @@ impl EngineContext {
         self.banks.get(&node)
     }
 
+    pub fn set_bank(&mut self, node: usize, bank: BankData) {
+        self.banks.insert(node, bank);
+    }
+
     /// `CylinderBankNode::addCylinder`
     pub fn add_cylinder(&mut self, bank: usize, cylinder: CylinderRefs) -> usize {
         let entry = self.banks.entry(bank).or_default();
@@ -461,6 +525,82 @@ impl EngineContext {
 
     pub fn ignition_module_mut(&mut self, node: usize) -> &mut IgnitionModuleData {
         self.ignition_modules.entry(node).or_default()
+    }
+
+    pub fn camshaft(&self, node: usize) -> Option<&CamshaftData> {
+        self.camshafts.get(&node)
+    }
+
+    pub fn camshaft_mut(&mut self, node: usize) -> &mut CamshaftData {
+        self.camshafts.entry(node).or_default()
+    }
+
+    pub fn valvetrain(&self, node: usize) -> Option<&ValvetrainData> {
+        self.valvetrains.get(&node)
+    }
+
+    pub fn set_valvetrain(&mut self, node: usize, valvetrain: ValvetrainData) {
+        self.valvetrains.insert(node, valvetrain);
+    }
+
+    pub fn throttle(&self, node: usize) -> Option<&ThrottleData> {
+        self.throttles.get(&node)
+    }
+
+    pub fn set_throttle(&mut self, node: usize, throttle: ThrottleData) {
+        self.throttles.insert(node, throttle);
+    }
+
+    /// `IgnitionWireNode::connect`
+    pub fn connect_wire(&mut self, wire: usize, bank: usize, index: usize) {
+        self.ignition_wires
+            .entry(wire)
+            .or_default()
+            .push((bank, index));
+    }
+
+    pub fn wire_connections(&self, wire: usize) -> &[(usize, usize)] {
+        self.ignition_wires
+            .get(&wire)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    /// `EngineContext::setCylinderIndex`
+    pub fn set_cylinder_index(&mut self, bank: usize, local: usize, global: i32) {
+        self.cylinder_indices.insert((bank, local), global);
+    }
+
+    /// `EngineContext::getCylinderIndex`. The original's `std::map` default is
+    /// zero for a pair it has never seen, and so is this.
+    pub fn cylinder_index(&self, bank: usize, local: usize) -> i32 {
+        self.cylinder_indices
+            .get(&(bank, local))
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// `EngineContext::addRodJournal`
+    pub fn add_rod_journal_index(&mut self, journal: usize, index: i32) {
+        self.rod_journal_indices.insert(journal, index);
+    }
+
+    pub fn rod_journal_index(&self, journal: usize) -> i32 {
+        self.rod_journal_indices.get(&journal).copied().unwrap_or(0)
+    }
+
+    /// `ConnectingRodNode::addRodJournal`: the rod gathers the journal, and the
+    /// journal learns which rod it is a slave of.
+    pub fn attach_slave_journal(&mut self, rod: usize, journal: usize) {
+        self.rod_slave_journals.entry(rod).or_default().push(journal);
+        self.rod_journals.entry(journal).or_default().rod = Some(rod);
+    }
+
+    pub fn rod_slave_journals(&self, rod: usize) -> &[usize] {
+        self.rod_slave_journals
+            .get(&rod)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
     }
 
     pub fn engine(&self, node: usize) -> Option<&EngineData> {

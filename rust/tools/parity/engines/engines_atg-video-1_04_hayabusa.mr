@@ -1,0 +1,3 @@
+import "../../../../assets/engines/atg-video-1/04_hayabusa.mr"
+
+main()

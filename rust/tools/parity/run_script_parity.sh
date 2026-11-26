@@ -10,11 +10,13 @@
 #          and the oracle re-emits it. The two trees have to match exactly
 #          (`compare_ir.py`), which pins the Rust parser to the original IR.
 #
-#   RUN    `assets/main.mr` is compiled and executed through the original
-#          resolve/validate/build/execute pipeline from the Rust dump, and the
-#          resulting engine is dumped together with a deterministic trace. This
-#          is the end-to-end target the Rust port has to reproduce once the
-#          node bindings land.
+#   RUN    `assets/main.mr` is built and simulated twice: through the original
+#          resolve/validate/build/execute/generate pipeline, and through the
+#          port's own front end into the port's own `engine-sim-core` engine.
+#          Both print the 97-line engine header and 16 166 per-frame checkpoints
+#          of physics, gas dynamics, synthesizer input and rendered audio, and
+#          all of it has to match -- the reference against the recorded fixture,
+#          and the port against the reference.
 #
 #   GRAPH  every script in `tools/parity/graph/` is built into a node graph by
 #          the original (`IrCompilationUnit::build`) and compared against the
@@ -31,6 +33,14 @@
 #   OBJECTS `--objects` and `--settings` on every script in `assets/`: the objects
 #          the data nodes generate and the application settings the script
 #          writes, byte for byte. This is the gate that reaches M4.
+#
+#   ENGINES every engine under `assets/engines/` that builds one, through
+#          `tools/parity/engines/` wrappers: the port's engine against the
+#          original's, 400 steps of the same per-frame checkpoints, byte for
+#          byte. Twenty engines -- inline fours to a V12 to a nine-cylinder
+#          radial -- so the parts `buildEngine` wires together (banks, rods and
+#          journals, camshafts, valvetrains, exhausts, intake, ignition, fuel)
+#          are exercised far beyond `assets/main.mr`'s one configuration.
 #
 #   ENGINE `--engine` on `assets/main.mr`: the engine the script configures --
 #          its name and counts, its curves, and every part's parameters, 96
@@ -62,10 +72,11 @@ cd "$REPO_ROOT"
 "$HERE/build_script_reference.sh"
 
 echo "== building the rust front end =="
-(cd "$RUST_DIR" && cargo build --release --example ir_dump --example corpus_check --example graph_dump >/dev/null)
+(cd "$RUST_DIR" && cargo build --release --example ir_dump --example corpus_check --example graph_dump --example script_trace >/dev/null)
 
 IR_DUMP="$RUST_DIR/target/release/examples/ir_dump"
 GRAPH_DUMP="$RUST_DIR/target/release/examples/graph_dump"
+SCRIPT_TRACE="$RUST_DIR/target/release/examples/script_trace"
 
 # The M2 target: what the original's resolve + validate decided, per port and
 # per attribute. Recorded rather than gated -- the Rust side cannot reproduce it
@@ -163,8 +174,16 @@ done
 
 echo "-- $COUNT files round-tripped and validated, $MISMATCHES mismatches"
 
-echo "== gate RUN: execute assets/main.mr through the original pipeline =="
+echo "== gate RUN: build and simulate assets/main.mr, both sides =="
 "$IR_DUMP" assets/main.mr > "$WORK/main.ir"
+
+# The point of the port: the script's engine, built by the port's own front end
+# and simulated by the port's own `engine-sim-core`. It prints the same 97-line
+# header and the same per-frame fields as the reference -- physics, gas dynamics,
+# synthesizer input and rendered audio -- so the whole 16 263-line trace is one
+# diff.
+"$SCRIPT_TRACE" assets/main.mr > "$WORK/main.port.trace" 2> "$WORK/main.port.err" \
+    || { echo "FAIL: the port could not run assets/main.mr"; head -20 "$WORK/main.port.err"; exit 1; }
 
 if [ -f "$REPO_ROOT/rust/crates/engine-sim-script/fixtures/main_engine.trace" ] && \
    [ "${UPDATE_FIXTURE:-}" != "1" ]; then
@@ -176,6 +195,14 @@ if [ -f "$REPO_ROOT/rust/crates/engine-sim-script/fixtures/main_engine.trace" ] 
     else
         echo "FAIL: engine trace differs from the recorded fixture"
         diff "$REPO_ROOT/rust/crates/engine-sim-script/fixtures/main_engine.trace" "$WORK/main.trace" | head -20
+        exit 1
+    fi
+
+    if diff -q "$WORK/main.trace" "$WORK/main.port.trace" >/dev/null; then
+        echo "PASS: the port's own engine reproduces all $(( $(wc -l < "$WORK/main.port.trace") )) lines of it"
+    else
+        echo "FAIL: the port's own engine does not match the reference"
+        diff "$WORK/main.trace" "$WORK/main.port.trace" | head -20
         exit 1
     fi
 else
@@ -257,6 +284,41 @@ if ! diff -q "$WORK/engine.ref" "$HERE/engine/main.engine" > /dev/null; then
     exit 1
 fi
 echo "PASS: $(( $(wc -l < "$WORK/engine.ref") )) engine header lines identical, and the recorded fixture still holds"
+
+# And the same trace for every engine in `assets/`. `assets/main.mr` only
+# configures one engine; these reach the parts it does not -- two exhaust
+# systems, five-valve heads, a VTEC valvetrain, a master-and-slave radial, a V12.
+echo "== gate ENGINES: every engine asset, simulated both sides =="
+engine_failures=0
+engine_count=0
+for wrapper in "$HERE"/engines/*.mr; do
+    [ -f "$wrapper" ] || continue
+    name=$(basename "$wrapper" .mr)
+
+    "$SCRIPT_TRACE" "$wrapper" > "$WORK/engines.port" 2> "$WORK/engines.port.err" \
+        || { echo "FAIL: the port could not run $name: $(head -3 "$WORK/engines.port.err")"; engine_failures=$((engine_failures + 1)); continue; }
+
+    "$IR_DUMP" "$wrapper" > "$WORK/engines.ir" 2>/dev/null
+
+    "$WORK/script_reference" --run "$wrapper" "$WORK/engines.ir" 400 > "$WORK/engines.ref" 2> "$WORK/engines.ref.err" \
+        || { echo "FAIL: the reference could not run $name: $(head -3 "$WORK/engines.ref.err")"; engine_failures=$((engine_failures + 1)); continue; }
+
+    if ! diff -q "$WORK/engines.ref" "$WORK/engines.port" > /dev/null; then
+        echo "FAIL: $name differs from the reference"
+        diff "$WORK/engines.ref" "$WORK/engines.port" | head -10
+        engine_failures=$((engine_failures + 1))
+        continue
+    fi
+
+    engine_count=$((engine_count + 1))
+done
+
+if [ "$engine_failures" -ne 0 ]; then
+    echo "FAIL: $engine_failures of $((engine_count + engine_failures)) engines differ"
+    exit 1
+fi
+
+echo "PASS: $engine_count engines, every checkpoint identical to the original"
 
 # And above that: what a run writes, and whether it fails where the original
 # fails.

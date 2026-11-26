@@ -551,6 +551,12 @@ const ADD_LOBE: ClassSpec = spec(
     &["camshaft", "centerline"],
 );
 
+const ADD_SLAVE_JOURNAL: ClassSpec = spec(
+    NodeClass::Builtin,
+    &[],
+    &["rod", "rod_journal"],
+);
+
 const ADD_ROD_JOURNAL: ClassSpec = spec(
     NodeClass::Builtin,
     &[],
@@ -713,6 +719,21 @@ const STANDARD_VALVETRAIN: ClassSpec = spec(
     &["exhaust_camshaft", "intake_camshaft"],
 );
 
+const VTEC_VALVETRAIN: ClassSpec = spec(
+    NodeClass::Builtin,
+    &[("__out", "ValvetrainChannel")],
+    &[
+        "exhaust_camshaft",
+        "intake_camshaft",
+        "manifold_vacuum",
+        "min_rpm",
+        "min_speed",
+        "min_throttle_position",
+        "vtec_exhaust_camshaft",
+        "vtec_intake_camshaft",
+    ],
+);
+
 const TRANSMISSION: ClassSpec = spec(
     NodeClass::Builtin,
     &[("__out", "VehicleChannel")],
@@ -790,6 +811,7 @@ fn class_spec(builtin: &str) -> Option<ClassSpec> {
         "add_ignition_module" => ADD_IGNITION_MODULE,
         "add_lobe" => ADD_LOBE,
         "add_rod_journal" => ADD_ROD_JOURNAL,
+        "add_slave_journal" => ADD_SLAVE_JOURNAL,
         "add_sample" => ADD_SAMPLE,
         "camshaft" => CAMSHAFT,
         "connect_ignition_wire" => CONNECT_IGNITION_WIRE,
@@ -816,6 +838,7 @@ fn class_spec(builtin: &str) -> Option<ClassSpec> {
         "set_transmission" => SET_TRANSMISSION,
         "set_vehicle" => SET_VEHICLE,
         "standard_valvetrain" => STANDARD_VALVETRAIN,
+        "vtec_valvetrain" => VTEC_VALVETRAIN,
         "transmission" => TRANSMISSION,
         "vehicle" => VEHICLE,
 

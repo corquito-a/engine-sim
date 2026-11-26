@@ -396,8 +396,38 @@ impl Program {
                 };
 
                 if let Some(bank) = self.object_source(node, "cylinder_bank") {
-                    self.context.add_cylinder(bank, cylinder);
+                    let index = self.context.add_cylinder(bank, cylinder);
+
+                    // `CylinderBankNode::addCylinder` ends with
+                    // `wire->connect(this, getCylinderCount() - 1)`.
+                    if let Some(wire) = self.object_source(node, "ignition_wire") {
+                        self.context.connect_wire(wire, bank, index);
+                    }
                 }
+
+                Ok(())
+            }
+
+            // `CylinderBankNode::_evaluate`: six numbers; the cylinder count and
+            // the index are `buildEngine`'s.
+            "cylinder_bank" => {
+                let mut bank = crate::objects::BankData {
+                    angle: self.number(node, "angle").unwrap_or(0.0),
+                    bore: self.number(node, "bore").unwrap_or(0.0),
+                    deck_height: self.number(node, "deck_height").unwrap_or(0.0),
+                    position_x: self.number(node, "position_x").unwrap_or(0.0),
+                    position_y: self.number(node, "position_y").unwrap_or(0.0),
+                    display_depth: self.number(node, "display_depth").unwrap_or(0.0),
+                    ..Default::default()
+                };
+
+                // The cylinders and the head survive a re-evaluation.
+                if let Some(existing) = self.context.bank(node) {
+                    bank.cylinders = existing.cylinders.clone();
+                    bank.head = existing.head;
+                }
+
+                self.context.set_bank(node, bank);
 
                 Ok(())
             }
@@ -595,6 +625,94 @@ impl Program {
                 Ok(())
             }
 
+            // `CamshaftNode::_evaluate`: two numbers and the lobe profile; the
+            // lobes themselves are `add_lobe`'s.
+            "camshaft" => {
+                let mut camshaft = crate::objects::CamshaftData {
+                    advance: self.number(node, "advance").unwrap_or(0.0),
+                    base_radius: self.number(node, "base_radius").unwrap_or(0.0),
+                    lobe_profile: self.object_source(node, "lobe_profile"),
+                    lobes: Vec::new(),
+                };
+
+                camshaft.lobes = self
+                    .context
+                    .camshaft(node)
+                    .map(|camshaft| camshaft.lobes.clone())
+                    .unwrap_or_default();
+
+                self.context.camshaft_mut(node).clone_from(&camshaft);
+
+                Ok(())
+            }
+
+            // `AddLobeNode::_evaluate`: one more centreline, in order.
+            "add_lobe" => {
+                if let Some(camshaft) = self.object_source(node, "camshaft") {
+                    let centerline = self.number(node, "centerline").unwrap_or(0.0);
+                    self.context.camshaft_mut(camshaft).lobes.push(centerline);
+                }
+
+                Ok(())
+            }
+
+            "standard_valvetrain" => {
+                self.context.set_valvetrain(
+                    node,
+                    crate::objects::ValvetrainData::Standard {
+                        intake_camshaft: self.object_source(node, "intake_camshaft"),
+                        exhaust_camshaft: self.object_source(node, "exhaust_camshaft"),
+                    },
+                );
+
+                Ok(())
+            }
+
+            "vtec_valvetrain" => {
+                self.context.set_valvetrain(
+                    node,
+                    crate::objects::ValvetrainData::Vtec {
+                        intake_camshaft: self.object_source(node, "intake_camshaft"),
+                        exhaust_camshaft: self.object_source(node, "exhaust_camshaft"),
+                        vtec_intake_camshaft: self.object_source(node, "vtec_intake_camshaft"),
+                        vtec_exhaust_camshaft: self.object_source(node, "vtec_exhaust_camshaft"),
+                        min_rpm: self.number(node, "min_rpm").unwrap_or(0.0),
+                        min_speed: self.number(node, "min_speed").unwrap_or(0.0),
+                        min_throttle_position: self
+                            .number(node, "min_throttle_position")
+                            .unwrap_or(0.0),
+                        manifold_vacuum: self.number(node, "manifold_vacuum").unwrap_or(0.0),
+                    },
+                );
+
+                Ok(())
+            }
+
+            "direct_throttle_linkage" => {
+                self.context.set_throttle(
+                    node,
+                    crate::objects::ThrottleData {
+                        gamma: self.number(node, "gamma").unwrap_or(0.0),
+                    },
+                );
+
+                Ok(())
+            }
+
+            // `AddSlaveJournalNode::_evaluate`: a journal hung on a rod rather
+            // than on the crankshaft, which is what a shared crank pin looks
+            // like.
+            "add_slave_journal" => {
+                if let (Some(rod), Some(journal)) = (
+                    self.object_source(node, "rod"),
+                    self.object_source(node, "rod_journal"),
+                ) {
+                    self.context.attach_slave_journal(rod, journal);
+                }
+
+                Ok(())
+            }
+
             // `AddCylinderBankNode`/`AddCrankshaftNode`: the engine node gathers
             // what it will build from, in the order the actions run.
             "add_cylinder_bank" => {
@@ -700,6 +818,7 @@ impl Program {
 
         let port = self.graph.port(port);
         let owner = port.owner?;
+
 
         // An object input can be wired to an interface output, which forwards the
         // pointer the referenced node published; follow it to the node itself.
