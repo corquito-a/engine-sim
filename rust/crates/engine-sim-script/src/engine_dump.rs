@@ -8,17 +8,27 @@
 //! script). The behaviour gate is the `RUN` trace, and it needs the port's own
 //! engine to step.
 //!
-//! Two orders are the original's, not the script's: `buildEngine` iterates the
+//! One order is the original's, not the script's: `buildEngine` iterates the
 //! exhaust systems and intakes it collected in a `std::set` of pointers, so with
-//! more than one of either the index order follows allocation. There is one of
-//! each in `assets/main.mr`, so the recorded header cannot see the difference;
-//! this dump uses the order the cylinders mention them in.
+//! more than one of either the index order follows allocation. Nodes are
+//! allocated as they are generated, so this sorts them by node id -- which
+//! reproduces the pointer order for every engine in `assets/`, including the
+//! ones with two exhaust systems (`atg-video-2/10_lfa_v10.mr`).
 
 use crate::objects::HeadData;
 use crate::program::Program;
 
 /// One record per line, in `script_reference --engine`'s order.
 pub fn dump(program: &mut Program) -> Vec<String> {
+    dump_with_displacement(program, 0.0)
+}
+
+/// The same header, with the displacement the application calculated.
+///
+/// `script_reference --run` dumps the header *after* `calculateDisplacement`, so
+/// the one line that differs between the two dumps is this one: everything else
+/// is a parameter. `frames` in [`crate::trace`] is what runs behind it.
+pub fn dump_with_displacement(program: &mut Program, displacement: f64) -> Vec<String> {
     let mut lines = Vec::new();
 
     let engine = match program.context.published_engine() {
@@ -54,6 +64,12 @@ pub fn dump(program: &mut Program) -> Vec<String> {
         }
     }
 
+    // `buildEngine` collects these in a `std::set` of *pointers*, so the index
+    // order follows allocation. piranha allocates a node when it is generated,
+    // which is the order of the graph's node ids, so that is the order here.
+    intakes.sort_unstable();
+    exhausts.sort_unstable();
+
     lines.push(format!("E,name,{}", engine.name));
     lines.push(format!("E,cylinder_banks,{}", banks.len()));
     lines.push(format!("E,cylinder_count,{}", cylinder_count));
@@ -62,7 +78,7 @@ pub fn dump(program: &mut Program) -> Vec<String> {
     lines.push(format!("E,intake_count,{}", intakes.len()));
 
     for (field, value) in [
-        ("displacement", engine.displacement),
+        ("displacement", displacement),
         ("redline", engine.redline),
         ("starter_torque", engine.starter_torque),
         ("starter_speed", engine.starter_speed),

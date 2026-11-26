@@ -1323,6 +1323,50 @@ them. `run_graph.py` and `tests/graph_tests.rs` enforce the graph,
 `run_graph.py --values` and `tests/value_tests.rs` the values,
 `run_graph.py --execute` and `tests/program_tests.rs` the runs, and
 `run_script_parity.sh` runs them as its `GRAPH`, `VALUES`, `OBJECTS`,
-`SETTINGS`, `ENGINE` and `EXECUTE` gates. What is *not* ported yet is the rest of the
-`es_script` classes (M4) — the part graph behind `engine`, which is what turns a
-run into a simulation.
+`SETTINGS`, `ENGINE` and `EXECUTE` gates. The rest of the `es_script` classes —
+the part graph behind `engine`, which is what turns a run into a simulation — is
+M4, and is where the next section starts.
+
+## The engine, and the twenty engines the one script could not reach
+
+`ENGINE` compared the 96 lines `buildEngine` *decides*; nothing yet simulated what
+the engine *does*. `RUN` closes that loop for `assets/main.mr`: both sides print
+the same 97-line header and 16 166 per-frame checkpoints of physics, gas dynamics,
+synthesizer input and rendered audio, and both halves are gated — the original
+against the recorded fixture, the port's own engine against the original.
+
+One script is a thin sample of `buildEngine`, though. It has one bank of four
+cylinders, one camshaft per side, one intake, one exhaust, two valves per
+cylinder. `assets/engines/` has twenty more engines that build one: two-stroke
+singles, a VTEC inline four, a flat four in two firing orders, a 2JZ, a 60° V6 and
+an odd-fire and an even-fire V6, an LS, an F136 V8, a five- and a nine-cylinder
+radial with master-and-slave rods, an LFA V10, a Merlin V12 and a 412 T2 flat
+twelve. Each asset is a definition file — `import`ed, with no `main()` of its own
+— so `tools/parity/engines/` holds one two-line wrapper per engine that imports it
+and calls `main()`, which is enough for `script_reference --run` and the port's
+`script_trace` to take the same trace.
+
+All twenty are byte-identical, 15 339 to 21 672 lines each. Three bugs required
+them, and none was visible from `main.mr`:
+
+- **An index nothing wrote.** `ExhaustSystem::new` does not set `index`; the
+  `Engine`'s initialize pass stamps it. The port built exhaust objects without it,
+  so every exhaust on the 2JZ wrote into staging slot 0 — 2 461 differing lines,
+  spread across the intake signal, the audio and `exhaust_signal`.
+- **A class missing from the port.** `__engine_sim__add_slave_journal` had no
+  `ClassSpec`, so the port generated no node for it at all, and a radial's slave
+  journals never recorded which rod they hang on. The first radial to *build an
+  engine* then failed with "a connecting rod rides a journal with no crankshaft",
+  which is exactly right: the journal had no crankshaft, and no master rod to
+  inherit one from either.
+- **A `std::set` of pointers.** `buildEngine` collects exhaust systems and intakes
+  in `std::set<...Node*>`, so their indices follow **addresses**, not the script's
+  order. One of each hides it; an engine with two exhaust systems of different
+  lengths does not. piranha allocates a node when it is generated, so node id
+  order is the pointer order here, and sorting by it reproduces the LFA V10, the
+  Merlin and the 412 T2 exactly.
+
+The gate is the sweep itself (`run_script_parity.sh`'s `ENGINES`): twenty engines,
+one diff each, `PASS: 20 engines, every checkpoint identical to the original`. It
+costs about forty seconds and it is the only gate that reaches master-and-slave
+rods, a VTEC valvetrain, five-valve heads, twin exhausts and twelve cylinders.
