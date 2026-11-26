@@ -1423,3 +1423,69 @@ responses, every sample identical`. The `OBJECTS` gate picks up the
 `impulse_response_filename`/`_volume` pair for each of the ten library nodes for
 free, since it already walks every data node, and `ENGINES` now exercises the real
 audio on all twenty engines.
+
+## The command line, and the four hundred frames that never fired a cylinder
+
+Every gate above stops at a trace. None of them runs the application, because the
+application is a Win32/D3D window. `crates/engine-sim-cli` is that loop without
+the window — `start_frame`, `simulate_step` until it returns false, `end_frame`,
+`render_audio_block`, `read_audio_output` — writing a wave file and a CSV. It had
+no headless reference to diff against, so it is verified in two directions: the
+driving against the oracle, and the binary against its own contract.
+
+**What the trace gates were not testing.** All of them — `RUN`, `ENGINES`, 20
+scripts, 16 265 and ~20 000 checkpoints each — hold the starter and leave the
+ignition alone. That is exactly right as a reproduction of the application before
+any key is pressed, and it is why they are bit-exact. It is also 400 frames in
+which **no cylinder ever fires**: `IgnitionModule` is constructed with
+`m_enabled = false` and only the `A` key (a `--ignition` flag in a harness) ever
+sets it. The script-built engine's entire combustion path — the plug angles
+`build.rs` derives from the wires, the timing curve sampled at `-v_theta`, the
+flame front, the fuel's random efficiency term, the `rand()` draw order — was
+outside every gate.
+
+The CLI found it the way a user would: `engine-sim-cli assets/main.mr --throttle 1`
+cranked to the starter's speed, let go, and stopped. One line in the driver
+(`ignition.enabled = true`) and the same script idles at ~790 rpm.
+
+**`DRIVEN`, the gate that would have caught it.** `run_script_parity.sh` gained a
+fourth kind of run: `PARITY_IGNITION=1`, `PARITY_STARTER_SECONDS=1`,
+`PARITY_THROTTLE=1`, `PARITY_STEPS=20000`, on both sides. Two seconds of a running
+engine, 1 740 frames with a lit chamber, chamber peaks near 17 bar, and
+**808 301 checkpoints identical** — physics, gas dynamics, synthesizer input and
+rendered `int16` audio. It costs three seconds and it is the only gate that sees a
+spark, so it is where a wrong firing order, a wrong advance curve or a `rand()`
+consumed out of order would show up.
+
+The first version of that comparison *failed*, at step 3 558, by one ulp — and the
+bug was in the harness, not the port. Only the Rust side had a `PARITY_IGNITION`
+variable; the C++ side silently ignored it, so one run had the module disabled and
+the other enabled, and the first spark (which at that mixture returns before doing
+anything but draw a random number) moved the trace. Two lessons, both worth
+keeping: a driver option has to exist on **both** sides of a comparison or the
+comparison is meaningless, and a 1-ulp divergence at the first combustion event
+looks exactly like a floating-point mis-transliteration while being nothing of the
+kind.
+
+**The binary's own contract.** `tests/cli_tests.rs` runs the executable:
+
+| Test | What it pins |
+|---|---|
+| `help_says_what_the_options_are` | `--help` exits 0 and names the options |
+| `a_run_without_a_script_is_refused` | no arguments is an error, with the usage |
+| `an_unknown_option_is_refused` | `--nonsense` is `unknown option` |
+| `a_throttle_outside_the_range_is_refused` | `--throttle 1.5` is refused |
+| `a_gear_the_transmission_does_not_have_is_refused` | `--gear 99` is refused after the script builds (the gear count is not knowable before) |
+| `a_run_writes_a_wave_file_of_the_length_it_simulated` | 0.2 s → 8 820 samples; RIFF/`WAVE`/`fmt `/`data`; mono, 44 100 Hz, 16-bit; data block = 2 × samples; one CSV row per frame plus the header |
+| `the_engine_runs_once_the_starter_is_released` | > 300 rpm one and a half seconds in, and < 50 rpm with `--no-ignition` |
+
+That last one is the important shape: it does not check a number, it checks that
+the engine *is an engine* — that it fires, and that turning the spark off stops
+it. A regression that silently disabled combustion would fail it, and nothing else
+in the suite would notice.
+
+`--dyno <rpm>` is the other thing the CLI adds that a trace cannot express: a
+held speed with a real torque reading (240 Nm / 75 kW at 3 000 rpm wide open, 30
+Nm at part throttle). The sign is the API's — the dynamometer reports the
+constraint's reaction, which is negative while it is being driven — so the summary
+negates it and the CSV keeps it raw.

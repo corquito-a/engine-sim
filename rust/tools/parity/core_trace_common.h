@@ -200,9 +200,29 @@ static void install_impulse_response(PhysicsSimulator *simulator, Engine *engine
     }
 }
 
+/// How a run is driven. The defaults are the ones every gate uses: the starter
+/// held (as the application holds `S`) and the script's own throttle, untouched.
+///
+/// `throttle` is a plate position, applied through the engine's speed control the
+/// way the application applies its keys (`position = 1 - speed_control^gamma`), and
+/// `starter_seconds` releases the starter after that much engine time -- without
+/// it the starter's velocity constraint holds the crankshaft at the starter's
+/// speed forever. `dyno_rpm` holds the crankshaft instead, and `ignition` (-1 =
+/// leave alone) switches the ignition module, which is built disabled.
+struct TraceOptions {
+    double throttle = -1.0;
+    double starter_seconds = -1.0;
+    double dyno_rpm = -1.0;
+    int ignition = -1;
+};
+
 /// Runs `steps` application frames, emitting the physics, the synthesizer input
 /// and every rendered audio sample.
-static void traceFrames(PhysicsSimulator *simulator, Engine *engine, int stepCount) {
+static void traceFrames(
+    PhysicsSimulator *simulator,
+    Engine *engine,
+    int stepCount,
+    const TraceOptions &options = TraceOptions()) {
     Crankshaft *crank = engine->getCrankshaft(0);
     Piston *piston = engine->getPiston(0);
     ConnectingRod *rod = engine->getConnectingRod(0);
@@ -214,6 +234,26 @@ static void traceFrames(PhysicsSimulator *simulator, Engine *engine, int stepCou
     const double timestep = simulator->getTimestep();
 
     for (int step = 0; step < stepCount; ++step) {
+        if (options.throttle >= 0.0) {
+            engine->setSpeedControl(1.0 - options.throttle);
+        }
+
+        if (options.ignition >= 0) {
+            engine->getIgnitionModule()->m_enabled = options.ignition != 0;
+        }
+
+        if (options.starter_seconds >= 0.0 &&
+            step * timestep >= options.starter_seconds) {
+            simulator->m_starterMotor.m_enabled = false;
+        }
+
+        if (options.dyno_rpm >= 0.0) {
+            simulator->m_starterMotor.m_enabled = false;
+            simulator->m_dyno.m_enabled = true;
+            simulator->m_dyno.m_hold = true;
+            simulator->m_dyno.m_rotationSpeed = units::rpm(options.dyno_rpm);
+        }
+
         // `startFrame` with a sub-half-timestep `dt` yields exactly one
         // simulation step per frame (the latency heuristic then bumps a
         // zero-step frame to one).

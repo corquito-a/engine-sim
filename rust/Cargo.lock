@@ -3,6 +3,14 @@
 version = 4
 
 [[package]]
+name = "engine-sim-cli"
+version = "0.1.0"
+dependencies = [
+ "engine-sim-core",
+ "engine-sim-script",
+]
+
+[[package]]
 name = "engine-sim-core"
 version = "0.1.0"
 
