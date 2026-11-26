@@ -1236,9 +1236,18 @@ than its behaviour, so `script_reference --engine` builds, initializes, executes
 and dumps the `E,...` header without stepping the simulation —
 `tools/parity/engine/main.engine` holds the 96 lines `assets/main.mr` produces
 (`E,name,Subaru EJ25`, the four counts, the fuel constants, every journal and
-cylinder parameter). `RECORD_ENGINE=1 ./run_script_parity.sh` re-records it. It
-is a target, not a gate yet: the port has no `Engine` to dump until those
-classes exist, which is what the plan's M4 row sequences.
+cylinder parameter). `RECORD_ENGINE=1 ./run_script_parity.sh` re-records it, and
+the `ENGINE` gate compares the port's `graph_dump --engine` against both the live
+reference and that fixture on every run; `tests/engine_tests.rs` does the same
+comparison without a C++ build.
+
+Two details of the header are deliberate. Both displacement fields are zero:
+`Engine::calculateDisplacement` is the *application's* call, made after the
+script has run (`EngineSimApplication::loadScript`), so a script that has just
+configured an engine reports none. And the exhaust and intake indices follow the
+order the cylinders mention them in, where the original iterates a `std::set` of
+pointers — with one of each in `assets/main.mr` the two orders coincide, and a
+second intake would need the reference to pin the order.
 
 **Then the objects.** M4's classes are `ObjectReferenceNode`s: a data node's
 `_evaluate` is `setOutput(this)` plus `readAllInputs`, so the *node* holds the
@@ -1314,6 +1323,6 @@ them. `run_graph.py` and `tests/graph_tests.rs` enforce the graph,
 `run_graph.py --values` and `tests/value_tests.rs` the values,
 `run_graph.py --execute` and `tests/program_tests.rs` the runs, and
 `run_script_parity.sh` runs them as its `GRAPH`, `VALUES`, `OBJECTS`,
-`SETTINGS` and `EXECUTE` gates. What is *not* ported yet is the rest of the
+`SETTINGS`, `ENGINE` and `EXECUTE` gates. What is *not* ported yet is the rest of the
 `es_script` classes (M4) — the part graph behind `engine`, which is what turns a
 run into a simulation.

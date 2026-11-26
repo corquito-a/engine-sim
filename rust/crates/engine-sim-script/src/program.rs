@@ -474,6 +474,208 @@ impl Program {
                 Ok(())
             }
 
+            // The data nodes. Each copies its inputs into the parameters its
+            // `generate` will hand to the part, so nothing is computed yet.
+            "intake" => {
+                let mut intake = crate::objects::IntakeData::default();
+
+                for (port, slot) in [
+                    ("plenum_volume", &mut intake.volume),
+                    ("plenum_cross_section_area", &mut intake.cross_section_area),
+                    ("intake_flow_rate", &mut intake.input_flow_k),
+                    ("idle_flow_rate", &mut intake.idle_flow_k),
+                    ("runner_flow_rate", &mut intake.runner_flow_rate),
+                    ("molecular_afr", &mut intake.molecular_afr),
+                    ("idle_throttle_plate_position", &mut intake.idle_throttle_plate_position),
+                    ("runner_length", &mut intake.runner_length),
+                    ("velocity_decay", &mut intake.velocity_decay),
+                ] {
+                    if let Some(value) = self.number(node, port) {
+                        *slot = value;
+                    }
+                }
+
+                self.context.intake_mut(node).clone_from(&intake);
+
+                Ok(())
+            }
+
+            "exhaust_system" => {
+                let mut exhaust = crate::objects::ExhaustData::default();
+
+                for (port, slot) in [
+                    ("length", &mut exhaust.length),
+                    (
+                        "collector_cross_section_area",
+                        &mut exhaust.collector_cross_section_area,
+                    ),
+                    ("outlet_flow_rate", &mut exhaust.outlet_flow_rate),
+                    ("primary_tube_length", &mut exhaust.primary_tube_length),
+                    ("primary_flow_rate", &mut exhaust.primary_flow_rate),
+                    ("audio_volume", &mut exhaust.audio_volume),
+                    ("velocity_decay", &mut exhaust.velocity_decay),
+                ] {
+                    if let Some(value) = self.number(node, port) {
+                        *slot = value;
+                    }
+                }
+
+                exhaust.impulse_response = self.object_source(node, "impulse_response");
+                self.context.exhaust_mut(node).clone_from(&exhaust);
+
+                Ok(())
+            }
+
+            // `CylinderHeadNode::_evaluate` reads its inputs and then clears the
+            // four object pointers, so only the numbers survive on the node.
+            "cylinder_head" => {
+                let mut head = crate::objects::HeadData::default();
+
+                for (port, slot) in [
+                    ("chamber_volume", &mut head.combustion_chamber_volume),
+                    (
+                        "intake_runner_volume",
+                        &mut head.intake_runner_volume,
+                    ),
+                    (
+                        "intake_runner_cross_section_area",
+                        &mut head.intake_runner_cross_section_area,
+                    ),
+                    (
+                        "exhaust_runner_volume",
+                        &mut head.exhaust_runner_volume,
+                    ),
+                    (
+                        "exhaust_runner_cross_section_area",
+                        &mut head.exhaust_runner_cross_section_area,
+                    ),
+                ] {
+                    if let Some(value) = self.number(node, port) {
+                        *slot = value;
+                    }
+                }
+
+                head.flip_display = self.number(node, "flip_display").map(|v| v != 0.0).unwrap_or(false);
+                head.intake_port_flow = self.object_source(node, "intake_port_flow");
+                head.exhaust_port_flow = self.object_source(node, "exhaust_port_flow");
+                head.valvetrain = self.object_source(node, "valvetrain");
+
+                self.context.head_mut(node).clone_from(&head);
+
+                Ok(())
+            }
+
+            // `IgnitionModuleNode`: its parameters, plus the posts the wire
+            // actions hang on it. `generate` is what turns those into a firing
+            // order, so nothing is resolved here.
+            "ignition_module" => {
+                let mut module = crate::objects::IgnitionModuleData::default();
+
+                module.timing_curve = self.object_source(node, "timing_curve");
+                module.rev_limit = self.number(node, "rev_limit").unwrap_or(module.rev_limit);
+                module.limiter_duration = self
+                    .number(node, "limiter_duration")
+                    .unwrap_or(module.limiter_duration);
+
+                self.context.ignition_module_mut(node).clone_from(&module);
+
+                Ok(())
+            }
+
+            // `ConnectIgnitionWireNode`? The wire posts belong to the module.
+            "connect_ignition_wire" => {
+                if let (Some(module), Some(wire)) = (
+                    self.object_source(node, "ignition_module"),
+                    self.object_source(node, "wire"),
+                ) {
+                    let angle = self.number(node, "angle").unwrap_or(0.0);
+                    self.context.ignition_module_mut(module).posts.push((wire, angle));
+                }
+
+                Ok(())
+            }
+
+            // `AddCylinderBankNode`/`AddCrankshaftNode`: the engine node gathers
+            // what it will build from, in the order the actions run.
+            "add_cylinder_bank" => {
+                if let (Some(engine), Some(bank)) = (
+                    self.object_source(node, "engine"),
+                    self.object_source(node, "cylinder_bank"),
+                ) {
+                    self.context.engine_mut(engine).cylinder_banks.push(bank);
+                }
+
+                Ok(())
+            }
+
+            "add_crankshaft" => {
+                if let (Some(engine), Some(crankshaft)) = (
+                    self.object_source(node, "engine"),
+                    self.object_source(node, "crankshaft"),
+                ) {
+                    self.context.engine_mut(engine).crankshafts.push(crankshaft);
+                }
+
+                Ok(())
+            }
+
+            "add_ignition_module" => {
+                if let (Some(engine), Some(module)) = (
+                    self.object_source(node, "engine"),
+                    self.object_source(node, "ignition_module"),
+                ) {
+                    self.context.engine_mut(engine).ignition_module = Some(module);
+                }
+
+                Ok(())
+            }
+
+            // `EngineNode::_evaluate` reads its inputs; `set_engine` is what makes
+            // the engine exist, so this is where the parameters are captured and
+            // the engine is published.
+            "set_engine" => {
+                if let Some(target) = self.object_source(node, "engine") {
+                    let mut engine = self.context.engine(target).cloned().unwrap_or_default();
+
+                    if let Some(value) = self.input(target, "name") {
+                        engine.name = value.text();
+                    }
+
+                    // Every remaining input is optional: an unconnected one keeps
+                    // the `Engine::Parameters` default the struct was born with.
+                    for (port, slot) in [
+                        ("starter_torque", &mut engine.starter_torque),
+                        ("starter_speed", &mut engine.starter_speed),
+                        ("redline", &mut engine.redline),
+                        ("dyno_min_speed", &mut engine.dyno_min_speed),
+                        ("dyno_max_speed", &mut engine.dyno_max_speed),
+                        ("dyno_hold_step", &mut engine.dyno_hold_step),
+                    ] {
+                        if let Some(value) = self.number(target, port) {
+                            *slot = value;
+                        }
+                    }
+
+                    engine.initial_simulation_frequency = self
+                        .number(target, "simulation_frequency")
+                        .unwrap_or(engine.initial_simulation_frequency);
+                    engine.initial_high_frequency_gain =
+                        self.number(target, "hf_gain").unwrap_or(engine.initial_high_frequency_gain);
+                    engine.initial_jitter =
+                        self.number(target, "jitter").unwrap_or(engine.initial_jitter);
+                    engine.initial_noise =
+                        self.number(target, "noise").unwrap_or(engine.initial_noise);
+
+                    engine.fuel = self.object_source(target, "fuel");
+                    engine.throttle = self.object_source(target, "throttle");
+                    engine.published = true;
+
+                    *self.context.engine_mut(target) = engine;
+                }
+
+                Ok(())
+            }
+
             // `ObjectReferenceNode::_evaluate` sets its output to itself and
             // reads its inputs into its parameter fields; the object is generated
             // on demand. Nothing to do at run time.

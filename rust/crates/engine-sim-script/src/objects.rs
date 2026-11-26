@@ -88,6 +88,63 @@ impl Default for ApplicationSettings {
     }
 }
 
+/// `EngineNode`'s `Engine::Parameters` and the two lists the actions fill: what
+/// `set_engine` publishes, before any part exists.
+#[derive(Clone, Debug)]
+pub struct EngineData {
+    pub name: String,
+    pub starter_torque: f64,
+    pub starter_speed: f64,
+    pub redline: f64,
+    pub dyno_min_speed: f64,
+    pub dyno_max_speed: f64,
+    pub dyno_hold_step: f64,
+    pub initial_simulation_frequency: f64,
+    pub initial_high_frequency_gain: f64,
+    pub initial_jitter: f64,
+    pub initial_noise: f64,
+
+    /// `Engine::m_displacement`. Only `Engine::calculateDisplacement` fills it
+    /// in, and that is the application's call after the script has run, so a
+    /// script that has just configured the engine reports zero.
+    pub displacement: f64,
+
+    pub fuel: Option<usize>,
+    pub throttle: Option<usize>,
+    pub ignition_module: Option<usize>,
+
+    pub cylinder_banks: Vec<usize>,
+    pub crankshafts: Vec<usize>,
+
+    /// `Compiler::output()->engine`, set by `set_engine` (`None` before that).
+    pub published: bool,
+}
+
+impl Default for EngineData {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            starter_torque: engine_sim_core::units::torque(90.0, engine_sim_core::units::FT_LB),
+            starter_speed: engine_sim_core::units::rpm(200.0),
+            redline: engine_sim_core::units::rpm(6500.0),
+            dyno_min_speed: engine_sim_core::units::rpm(1000.0),
+            dyno_max_speed: engine_sim_core::units::rpm(6500.0),
+            dyno_hold_step: engine_sim_core::units::rpm(100.0),
+            initial_simulation_frequency: 0.0,
+            initial_high_frequency_gain: 0.0,
+            initial_jitter: 0.0,
+            initial_noise: 0.0,
+            displacement: 0.0,
+            fuel: None,
+            throttle: None,
+            ignition_module: None,
+            cylinder_banks: Vec::new(),
+            crankshafts: Vec::new(),
+            published: false,
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct EngineContext {
     functions: BTreeMap<usize, Function>,
@@ -101,6 +158,11 @@ pub struct EngineContext {
     /// `CylinderHeadNode::m_bank`.
     head_banks: BTreeMap<usize, usize>,
     banks: BTreeMap<usize, BankData>,
+    engines: BTreeMap<usize, EngineData>,
+    intakes: BTreeMap<usize, IntakeData>,
+    exhausts: BTreeMap<usize, ExhaustData>,
+    heads: BTreeMap<usize, HeadData>,
+    ignition_modules: BTreeMap<usize, IgnitionModuleData>,
 }
 
 /// `RodJournalNode`'s `m_angle`, plus the crankshaft and rod the actions stamp
@@ -131,6 +193,62 @@ pub struct CylinderRefs {
 pub struct BankData {
     pub cylinders: Vec<CylinderRefs>,
     pub head: Option<usize>,
+}
+
+/// `IntakeNode`'s `Intake::Parameters`: copied verbatim into the `Intake`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct IntakeData {
+    pub volume: f64,
+    pub cross_section_area: f64,
+    pub input_flow_k: f64,
+    pub idle_flow_k: f64,
+    pub runner_flow_rate: f64,
+    pub molecular_afr: f64,
+    pub idle_throttle_plate_position: f64,
+    pub runner_length: f64,
+    pub velocity_decay: f64,
+}
+
+/// `ExhaustSystemNode`'s `ExhaustSystem::Parameters`, minus the impulse response
+/// it stamps in when it generates.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ExhaustData {
+    pub length: f64,
+    pub collector_cross_section_area: f64,
+    pub outlet_flow_rate: f64,
+    pub primary_tube_length: f64,
+    pub primary_flow_rate: f64,
+    pub audio_volume: f64,
+    pub velocity_decay: f64,
+    pub impulse_response: Option<usize>,
+}
+
+/// `CylinderHeadNode`'s `CylinderHead::Parameters`, minus the four pointers
+/// `_evaluate` clears after reading them. `flip_display` arrives as a number.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct HeadData {
+    pub combustion_chamber_volume: f64,
+    pub flip_display: bool,
+    pub intake_runner_volume: f64,
+    pub intake_runner_cross_section_area: f64,
+    pub exhaust_runner_volume: f64,
+    pub exhaust_runner_cross_section_area: f64,
+
+    pub intake_port_flow: Option<usize>,
+    pub exhaust_port_flow: Option<usize>,
+    pub valvetrain: Option<usize>,
+}
+
+/// `IgnitionModuleNode`'s own state: its parameters plus the posts
+/// `connect_ignition_wire` hangs on it.
+#[derive(Clone, Debug, Default)]
+pub struct IgnitionModuleData {
+    pub timing_curve: Option<usize>,
+    pub rev_limit: f64,
+    pub limiter_duration: f64,
+
+    /// `IgnitionModuleNode::Post`: the wire, and the angle it fires at.
+    pub posts: Vec<(usize, f64)>,
 }
 
 /// `VehicleNode`'s `Vehicle::Parameters`: six numbers, and nothing stamped in
@@ -311,6 +429,52 @@ impl EngineContext {
         self.banks.entry(bank).or_default().head = Some(head);
         self.head_banks.insert(head, bank);
         Ok(())
+    }
+
+    pub fn intake(&self, node: usize) -> Option<&IntakeData> {
+        self.intakes.get(&node)
+    }
+
+    pub fn intake_mut(&mut self, node: usize) -> &mut IntakeData {
+        self.intakes.entry(node).or_default()
+    }
+
+    pub fn exhaust(&self, node: usize) -> Option<&ExhaustData> {
+        self.exhausts.get(&node)
+    }
+
+    pub fn exhaust_mut(&mut self, node: usize) -> &mut ExhaustData {
+        self.exhausts.entry(node).or_default()
+    }
+
+    pub fn head(&self, node: usize) -> Option<&HeadData> {
+        self.heads.get(&node)
+    }
+
+    pub fn head_mut(&mut self, node: usize) -> &mut HeadData {
+        self.heads.entry(node).or_default()
+    }
+
+    pub fn ignition_module(&self, node: usize) -> Option<&IgnitionModuleData> {
+        self.ignition_modules.get(&node)
+    }
+
+    pub fn ignition_module_mut(&mut self, node: usize) -> &mut IgnitionModuleData {
+        self.ignition_modules.entry(node).or_default()
+    }
+
+    pub fn engine(&self, node: usize) -> Option<&EngineData> {
+        self.engines.get(&node)
+    }
+
+    /// `EngineNode::addCylinderBank`/`addCrankshaft`, in the order the actions ran.
+    pub fn engine_mut(&mut self, node: usize) -> &mut EngineData {
+        self.engines.entry(node).or_default()
+    }
+
+    /// The cylinder banks and crankshafts of the published engine, if any.
+    pub fn published_engine(&self) -> Option<&EngineData> {
+        self.engines.values().find(|engine| engine.published)
     }
 
     /// The nodes that generated an object, in order.

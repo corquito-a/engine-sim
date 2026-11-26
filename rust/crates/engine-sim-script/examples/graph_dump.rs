@@ -81,6 +81,7 @@ fn main() {
     let mut execute = false;
     let mut objects = false;
     let mut settings = false;
+    let mut engine = false;
     let mut arguments = std::env::args().skip(1);
 
     let entry = loop {
@@ -91,9 +92,10 @@ fn main() {
             Some(argument) if argument == "--execute" => execute = true,
             Some(argument) if argument == "--objects" => objects = true,
             Some(argument) if argument == "--settings" => settings = true,
+            Some(argument) if argument == "--engine" => engine = true,
             Some(argument) => break argument,
             None => {
-                eprintln!("usage: graph_dump [--values|--execute|--objects|--settings] [--rules=piranha|engine-sim] <root.mr> [search-path...]");
+                eprintln!("usage: graph_dump [--values|--execute|--objects|--settings|--engine] [--rules=piranha|engine-sim] <root.mr> [search-path...]");
                 std::process::exit(2);
             }
         }
@@ -135,6 +137,21 @@ fn main() {
         if let Err(message) = result {
             eprintln!("runtime error: {}", message);
             std::process::exit(1);
+        }
+
+        return;
+    }
+
+    if engine {
+        let mut program = engine_sim_script::program::Program::new(graph);
+
+        if let Err(message) = program.execute() {
+            eprintln!("runtime error: {}", message);
+            std::process::exit(1);
+        }
+
+        for line in engine_sim_script::engine_dump::dump(&mut program) {
+            println!("{}", line);
         }
 
         return;

@@ -1628,6 +1628,10 @@ static void dumpBuiltinPorts(piranha::LanguageRules *rules, const std::string &l
 }
 
 int main(int argc, char **argv) {
+    // Line-buffer stdout so that a crash in the oracle still shows which record
+    // it had reached; a pipe would otherwise swallow everything it had printed.
+    std::setvbuf(stdout, nullptr, _IOLBF, 0);
+
     if (argc < 3) {
         std::fprintf(stderr,
             "usage: script_reference --ir    <dump.txt>\n"

@@ -21,6 +21,7 @@ pub mod circular;
 pub mod context;
 pub mod definitions;
 pub mod dump;
+pub mod engine_dump;
 pub mod error;
 pub mod expansion;
 pub mod graph;
