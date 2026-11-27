@@ -109,3 +109,24 @@ The gate itself should stay a floor (`measure_performance.sh` already fails only
 below 0.25× real time), because wall-clock on shared runners is not something to
 be strict about. The *history* is what tells you something regressed; that is the
 nightly job's product, not the PR gate's.
+
+## 4. The other toolchain: the C++ oracle
+
+The reference is a test instrument, not a product, so the rule inverts: it should
+be *fast enough* and *bit-stable*, in that order of importance but never the other
+way round.
+
+- It is already built at `-O2` (`build_script_reference.sh`,
+  `run_core_parity.sh`, `run_dsp_parity.sh`), with `-fpermissive` and
+  `-D__forceinline=inline` to accept the application's MSVC-isms. There is no
+  `-O0` hiding in the suite: staging takes ~45 s and the whole gate suite ~5.6 min
+  on this box, of which the oracle's own runs are the majority (`RUNNING` alone is
+  ~2.5 min).
+- **Do not add `-march=native` to it.** GCC contracts `a*b+c` into FMA by default
+  for C++, so a baseline-generic build is what keeps the oracle's arithmetic in
+  the order the port reproduces. A wider target could move the oracle's own bits
+  and the gates would fail for a reason that has nothing to do with the port.
+- What *would* shorten the suite without touching arithmetic: `lld` or `gold` for
+  the link (the staging step), `ccache` for repeated staging, and sharding the
+  gates across jobs (`next-steps.md` §1.2). Those are CI-shape decisions, not
+  correctness ones.
