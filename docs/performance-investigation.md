@@ -414,7 +414,7 @@ exists in this repository:
 |---|---|
 | O1 changes no resolved structure | `RESOLVED` (40 scripts vs the oracle's rows), `IR`, `GRAPH` dumps |
 | O1 changes no expansion order | `ir_dump`/`graph_dump` `diff -r` over 21 scripts (done, empty), plus `cargo test` 184/184 |
-| O2/O4 change no audio sample | `WAVE` gate (recorded fixtures, byte compare), `wave_dump`, `dsp_trace`, the `dsp` unit tests that already assert `f_pair` equals two `f`s |
+| O2/O4 change no audio sample | the traces' rendered `i16` samples (`RUN`, `DRIVEN`, `RUNNING`, `ENGINES` — every audio sample the driver reads, bit-compared to the oracle), the `dsp` unit tests that already assert `f_pair` equals two `f`s, and a new bit test for the two-sample form. Note: `WAVE` is the RIFF *decoder* on `es/sound-library/*.wav`, not rendered engine audio, and no gate compares the full-rate 44.1 kHz stream — see §4.2 of [`performance-options.md`](performance-options.md) |
 | O3 changes no simulation state | `DRIVE`, `DRIVEN`, `RUNNING`, `ENGINES` traces against the oracle |
 
 What is **not** verifiable in this environment, and is therefore not claimed:

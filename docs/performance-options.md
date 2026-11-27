@@ -171,7 +171,92 @@ volume moves the pressure trace on the first frame.
 
 ---
 
-## 4. Sequencing, and what I would change in the plan
+## 4. The risk that any of this changes an output bit
+
+The short answer, per item: **O1 and O3 carry no floating-point arithmetic at all**
+— one is a compile-time table index, the other is an `f64` reused instead of
+recomputed — so they cannot move a number by rounding. O2 does arithmetic, and it
+is the only one where the numbers themselves are at stake; its algebra is proven
+per-output-sample bit-identical and tested as such. The interesting part is not
+the size of the risk, it is *what would catch it*, and there the answer is uneven:
+the trace gates are stronger than they look for the simulation and weaker than
+they look for the audio.
+
+### 4.1 What the change can do to the numbers
+
+| | adds/removes/reorders float ops? | what can go wrong | how it would show | residual after the gates |
+|---|---|---|---|---|
+| **O1** | **none** | (a) the hash is *finer* than `is_equal`, so a bucket miss wrongly returns "no expansion" → wrong or missing expansion → a different IR; (b) the memo keys on context ids instead of values → the wrong member of an equivalence class wins → a divergent walk; (c) someone later edits `is_equal` and the hash silently goes stale | a different IR, which means different geometry, different gas state, different everything: `RESOLVED`, `IR`, `GRAPH`, `VALUES`, `OBJECTS`, `ENGINE` and every trace fail at once — loud, not quiet | low. (b) is already measured and fatal-looking (331 965 contexts, 3.6 s → 30 s). (a) cannot happen if the derivation is right — the hash reads exactly the fields `is_equal` reads, in the same order, with the same stopping rule ⇒ *equal ⇒ equal hash* for every chain, corpus or not. (c) is the real one: it is a maintenance hazard, and it is why the `debug_assert` in §1 exists |
+| **O2** | **none numerically** — the same products in the same order, split across two independent accumulators | (a) an algebra error at a wrap boundary → wrong samples for some phases; (b) the plumbing reorders the per-sample work — two `rng.next_unit()` draws per channel per sample, the jitter/DC/derivative/air-noise state, the leveler and antialias filters all advance once per *sample*; if a two-sample path computes both samples' inputs before convolving, the draw order changes and the noise changes | (a) and (b) both change audio bytes: the trace emits every rendered `i16` sample it reads, and every other emitted field keeps matching, so the failure localises to audio immediately | low. (a) is closed by test, not by hope: the prototype's bit comparison covers `n = 5..39` at *every* wrap phase, which is every boundary the algebra has. (b) is loud. The genuine residual is (c): **the trace renders only ~2 samples per frame** (the trace driver advances one simulation step per frame, so the input ring is nearly empty and `render_block` has almost nothing to do) — a bug that only appears when hundreds of samples render at once is outside what the corpus exercises. That is a gap in the *gates*, not in the change, and §4.4 proposes closing it |
+| **O3** | **none** — the same `f64` value, computed once instead of nine times | the value is computed at a point in the step where the bodies have moved | `chamber_volume`, `crank_theta` and every pressure field diverge on the first step — the loudest possible failure | very low. `get_volume` reads only `bodies[piston_body].p_x/p_y` and the bank's geometry, and bodies do not move between `chamber.update` and the eighth `flow` call. Passing it as a parameter means a future caller has to produce it, rather than inherit a stale field |
+
+The rejected options in §2 are exactly the ones with real numeric risk: FFT /
+partitioned convolution, wider accumulators, tap-parallel SIMD, four chains with
+per-chain register copies (which changes *which* register the taps multiply),
+`powf` → repeated multiplication, fewer fluid sub-steps, a shorter impulse
+response. Each of those trades bits for time. That is why they are rejected and
+not deferred.
+
+### 4.2 What the suite actually compares
+
+This matters because "the gates are green" is doing different amounts of work for
+different fields:
+
+| what | granularity | where |
+|---|---|---|
+| resolved script, node graph, values, objects, settings, engine configuration | text, compared to the oracle's own dump | `RESOLVED`, `IR`, `GRAPH`, `VALUES`, `OBJECTS`/`SETTINGS`, `ENGINE`, `EXECUTE` — 40 scripts |
+| simulation state (crank, piston, rod, chamber, gas, dyno, ignition) | `f64` **bit patterns** (`{:016x}`), per frame | `RUN` (400 frames), `DRIVEN` (20 000 frames = 20 000 steps), `RUNNING` (all 20 engines, 0.5 s each), `ENGINES` (every asset, 400 frames) |
+| rendered audio | `i16` samples, as the app writes them | the same traces — but **~2 samples per frame**, because the trace driver steps the simulation once per frame and the synthesizer's input ring is therefore almost empty |
+| impulse-response decoding | every sample, byte compare | `WAVE` — this is the RIFF decoder on `es/sound-library/*.wav`, **not** the rendered engine audio |
+| full-rate rendered audio (the 44.1 kHz stream the app plays) | nothing | **no gate compares it today**, against the oracle or against a recording |
+
+Two consequences:
+
+* For O2, the oracle comparison of audio is real but thin, and the *thick* check is
+  the unit-level bit test. That division of labour has to be explicit, or someone
+  will assume the trace covers the convolution at full rate and stop writing the
+  unit test.
+* The simulation fields are compared as `f64` bits, which is why O3's failure mode
+  is so loud — a stale volume cannot hide in a rounded decimal.
+
+### 4.3 Why "prototype was bit-identical" is sound evidence here
+
+The prototypes were checked against the **port**, not against the C++ oracle: IR and
+graph dumps of all 21 scripts `diff -r`-identical, the filter compared bit-for-bit
+against the existing `f`, 184 tests green. That is a *transitive* argument, and it is
+the right one: the port's baseline output is pinned to the original by the 13
+gates, so preserving the baseline's bytes preserves parity with the original. It
+does **not** re-derive parity, and it cannot tell you whether the baseline was
+already wrong — that is what the gates are for.
+
+What was *not* done this session: running the 13 gates against the prototypes
+(staging the oracle takes ~45 s and the suite ~6 min; both were available and it
+was not done). That is the first thing the landing PR should do, and until it does,
+the status of O1–O3 is "bit-identical to the port" rather than "verified against the
+original".
+
+### 4.4 What I would add, and what would change my mind
+
+1. **Run the 13 gates on the branch that lands each change.** Non-negotiable, and it
+   turns §4.3's transitivity into a direct comparison.
+2. **O1: the `debug_assert` and the dump-diff gate** (§1). The assert is the only
+   thing that catches a future `is_equal` edit, and the dump-diff is the only check
+   that sees expansion *order*.
+3. **O2: the permanent `f_two`-vs-`f` bit test** on the real 5 636-tap response,
+   plus — new, and worth doing on its own — **a golden WAV fixture**: render
+   `assets/main.mr` and one stereo engine through the CLI at full rate, commit the
+   bytes, and diff them in the suite. It will not prove parity with the original,
+   but it makes every future audio change loud, and it closes the "hundreds of
+   samples per block" blind spot that the traces leave open today.
+4. **O3: nothing extra.** The parameter is the invariant; the corpus checks it.
+5. **What would change my mind on O1:** a script in the corpus whose expansion
+   depends on the *order* in which equal contexts were created, in a way the dumps
+   do not show. I looked for one and found none — but that is the shape of thing
+   that would make bucketing unsafe rather than merely slow.
+
+---
+
+## 5. Sequencing, and what I would change in the plan
 
 | order | what | why this order | gate |
 |---|---|---|---|
