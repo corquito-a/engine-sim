@@ -447,7 +447,10 @@ those.
    bit test that this document asked for, and gated by the same traces.
 3. ~~**Take O3 in the same PR as the next change to `simulator.rs`**~~ **Landed**
    (`80e79e7`); the corpus traces are byte-identical with it.
-4. **O5 has now had the profile it needed.** `build_graph` is `cached_instance`:
+4. ~~**O5 has now had the profile it needed.**~~ **Landed** as `34089c2`: the
+   structure bucket takes `build_graph` from 0.118 s to 0.034-0.038 s, and the
+   four-chain convolution from §6 landed as `fa70a7a` at −11% to −15% of a stereo
+   frame. For the record, what this item said before those landed: `build_graph` is `cached_instance`:
    on `radial_9` it scans 101 million nodes to resolve 140 124 lookups, 99.5% of
    the scans discarded by the `ir_structure` test, at 384 bytes a node. Bucketing
    nodes by structure takes it from 0.118 s to 0.034-0.043 s with byte-identical
