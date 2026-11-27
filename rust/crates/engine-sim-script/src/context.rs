@@ -28,6 +28,11 @@ struct ContextNode {
     context: Option<StructureId>,
     main: bool,
     parent: Option<ContextId>,
+    /// A hash of the whole chain, computed once when the node is pushed. Equal
+    /// chains hash equal (see `compute_hash`), which is what lets the expansion
+    /// memo bucket by value; a *differing* hash is therefore proof of
+    /// inequality, and `is_equal` uses it as a fast reject.
+    hash: u64,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -48,14 +53,14 @@ impl ContextArena {
             return empty;
         }
 
-        let id = self.push(ContextNode { context: None, main: false, parent: None });
+        let id = self.push(ContextNode { context: None, main: false, parent: None, hash: 0 });
         self.empty = Some(id);
         id
     }
 
     /// `IrContextTree(context, mainContext)`
     pub fn new_root(&mut self, context: Option<StructureId>, main: bool) -> ContextId {
-        self.push(ContextNode { context, main, parent: None })
+        self.push(ContextNode { context, main, parent: None, hash: 0 })
     }
 
     /// `IrContextTree::newChild`
@@ -82,12 +87,49 @@ impl ContextArena {
         context: Option<StructureId>,
         main: bool,
     ) -> ContextId {
-        self.push(ContextNode { context, main, parent: Some(parent) })
+        self.push(ContextNode { context, main, parent: Some(parent), hash: 0 })
     }
 
-    fn push(&mut self, node: ContextNode) -> ContextId {
+    fn push(&mut self, mut node: ContextNode) -> ContextId {
+        node.hash = self.compute_hash(&node);
         self.nodes.push(node);
         self.nodes.len() - 1
+    }
+
+    /// The hash of the chain below `node`, folded from the parent's hash.
+    ///
+    /// It draws **exactly** the distinctions `is_equal` draws, and nothing else:
+    ///
+    /// * the `context` of each frame, from this node up the parent chain, and
+    /// * the first frame whose context is absent, which is where `is_equal`
+    ///   stops comparing (that frame contributes nothing but a terminator).
+    ///
+    /// It deliberately *ignores* `main`, because `is_equal` never compares it.
+    /// Both of those are load-bearing: a hash that is coarser than `is_equal`
+    /// only costs time (the bucket still calls `same()`), but a hash that is
+    /// **finer** would make a bucket miss mean "no such expansion" when one
+    /// exists, which is a different engine. `is_equal` asserts that direction in
+    /// debug builds; see `docs/performance-options.md`, §4.1.
+    fn compute_hash(&self, node: &ContextNode) -> u64 {
+        let Some(context) = node.context else {
+            return 0;
+        };
+
+        let parent = match node.parent {
+            Some(parent) => self.nodes[parent].hash,
+            None => 0,
+        };
+
+        let mut h = parent ^ 0x9e37_79b9_7f4a_7c15;
+        h = h.wrapping_mul(0xff51_afd7_ed55_8ccd);
+        h ^= (context as u64 + 1).wrapping_mul(0xc4ce_b9fe_1a85_ec53);
+        h
+    }
+
+    /// The chain hash of `id`. Two ids that `is_equal` calls equal always have
+    /// the same hash; two ids with different hashes are never equal.
+    pub fn hash(&self, id: ContextId) -> u64 {
+        self.nodes[id].hash
     }
 
     pub fn context(&self, id: ContextId) -> Option<StructureId> {
@@ -202,6 +244,26 @@ impl ContextArena {
 
     /// `IrContextTree::isEqual`
     pub fn is_equal(&self, left: ContextId, right: ContextId) -> bool {
+        if left == right {
+            return true;
+        }
+
+        if self.nodes[left].hash != self.nodes[right].hash {
+            // Rejecting on the hash is only sound because equal chains hash
+            // equal. That is the whole correctness argument for the expansion
+            // memo's buckets, so debug builds check it here, on every rejection
+            // -- the direction that would otherwise lose an expansion silently.
+            debug_assert!(
+                !self.is_equal_slow(left, right),
+                "the context chain hash is finer than `is_equal`: a bucketed memo would miss an expansion",
+            );
+            return false;
+        }
+
+        self.is_equal_slow(left, right)
+    }
+
+    fn is_equal_slow(&self, left: ContextId, right: ContextId) -> bool {
         let mut current = left;
         let mut reference = right;
 

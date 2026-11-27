@@ -356,9 +356,24 @@ impl Synthesizer {
                 .set_jitter_scale(self.audio_parameters.input_sample_noise);
         }
 
-        for i in 0..n {
+        // A mono signal is one dependent add chain per sample; two samples at a
+        // time fill the pipeline (`render_audio_pair`). Anything else, and the
+        // odd last sample of a block, goes through the one-sample path.
+        let mut i = 0;
+
+        if self.input_channel_count == 1 && self.filters[0].convolution.sample_count() >= 2 {
+            while i + 1 < n {
+                let (first, second) = self.render_audio_pair(i, rng);
+                self.audio_buffer.write(first);
+                self.audio_buffer.write(second);
+                i += 2;
+            }
+        }
+
+        while i < n {
             let sample = self.render_audio(i, rng);
             self.audio_buffer.write(sample);
+            i += 1;
         }
 
         n
@@ -438,6 +453,45 @@ impl Synthesizer {
             }
         }
 
+        self.finish_sample(signal)
+    }
+
+    /// Two consecutive samples of a mono signal, one pass over the impulse
+    /// response instead of two.
+    ///
+    /// `ConvolutionFilter::f_two` is bit-identical to two `f` calls. Around it,
+    /// everything has to stay in sample order: the two `rand()` draws per sample
+    /// are taken for `input_sample` and then `input_sample + 1`, and the tail
+    /// (`finish_sample`) advances one sample at a time, so the state of the
+    /// jitter, DC, derivative, noise, antialiasing and leveling filters advances
+    /// exactly as it does one sample at a time.
+    fn render_audio_pair(&mut self, input_sample: usize, rng: &mut Rng) -> (i16, i16) {
+        debug_assert_eq!(self.input_channel_count, 1);
+
+        let air_noise = self.audio_parameters.air_noise;
+        let df_f_mix = self.audio_parameters.df_f_mix;
+        let conv_amount = self.audio_parameters.convolution;
+
+        let v_0 = self.channel_input(0, input_sample, rng, air_noise, df_f_mix);
+        let v_1 = self.channel_input(0, input_sample + 1, rng, air_noise, df_f_mix);
+
+        let (conv_0, conv_1) = self.filters[0].convolution.f_two(v_0, v_1);
+
+        // `render_audio` accumulates into a fresh `0.0` per sample; the `+=` is
+        // kept so that the sign of a zero is the same as there.
+        let mut signal_0 = 0.0f32;
+        signal_0 += conv_amount * conv_0 + (1.0 - conv_amount) * v_0;
+        let mut signal_1 = 0.0f32;
+        signal_1 += conv_amount * conv_1 + (1.0 - conv_amount) * v_1;
+
+        (self.finish_sample(signal_0), self.finish_sample(signal_1))
+    }
+
+    /// `Synthesizer::renderAudio`'s tail: anti-aliasing, leveling, volume, and
+    /// the conversion to `i16`. Inlined into both render paths: a sample is 2 us
+    /// of convolution, but the stereo path calls this 44 100 times a second too.
+    #[inline]
+    fn finish_sample(&mut self, mut signal: f32) -> i16 {
         signal = self.antialiasing.fast_f(signal);
 
         self.leveling_filter.target = self.audio_parameters.leveler_target;

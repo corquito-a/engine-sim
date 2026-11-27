@@ -151,20 +151,43 @@ impl ReferenceChain {
 pub struct ReferenceState {
     pub contexts: ContextArena,
     /// `m_expansions`: one `PKeyValueLookup<IrContextTree, IrNode *>` per
-    /// structure, which is why the table is grouped by structure here. Within a
-    /// structure the contexts are compared **by value** (`*stored == *key`, i.e.
-    /// `IrContextTree::isEqual`), not by pointer -- so a freshly created context
-    /// that is structurally equal to one already used finds the same expansion.
-    /// Keying by context id instead loses every expansion the moment the walk
-    /// creates an equal-but-distinct child, which is exactly what a node's
-    /// `getImmediateReference` does.
-    expansions: HashMap<StructureId, Vec<(Option<ContextId>, Option<StructureId>)>>,
+    /// structure. Within a structure the contexts are compared **by value**
+    /// (`*stored == *key`, i.e. `IrContextTree::isEqual`), not by pointer -- so a
+    /// freshly created context that is structurally equal to one already used
+    /// finds the same expansion. Keying by context id instead loses every
+    /// expansion the moment the walk creates an equal-but-distinct child, which
+    /// is exactly what a node's `getImmediateReference` does.
+    ///
+    /// That value comparison is what made this table quadratic: a linear scan of
+    /// the structure's entries, each step walking two context chains, is ~10^9
+    /// comparisons to expand a nine-cylinder engine (`docs/performance-options.md`
+    /// §1). So the entries are bucketed by the context chain's hash
+    /// (`ContextArena::hash`), which is equal for equal chains by construction.
+    ///
+    /// A bucket that contains no equal entry therefore proves that the structure
+    /// has no equal entry at all, and no scan across buckets is needed. Every
+    /// member of a bucket is a distinct chain, so the scan inside a bucket is the
+    /// same first-match scan the reference performs -- which is why bucketing
+    /// preserves the (observable) order in which equal expansions win.
+    ///
+    /// A hash *collision* can only cost time: the entry is still confirmed with
+    /// `same()`, so two chains that merely hash alike stay apart.
+    expansions: HashMap<(StructureId, u64), Vec<(Option<ContextId>, Option<StructureId>)>>,
     infinite_loops: HashMap<StructureId, Vec<Option<ContextId>>>,
 }
 
 impl ReferenceState {
     pub fn new() -> Self {
         ReferenceState::default()
+    }
+
+    /// The bucket key for `context`: the chain's hash, or 0 for "no context".
+    ///
+    /// A missing context and the shared empty context hash to the same bucket,
+    /// which is harmless: `same()` distinguishes them, so they simply share a
+    /// bucket of at most two entries.
+    fn chain_key(&self, structure: StructureId, context: Option<ContextId>) -> (StructureId, u64) {
+        (structure, context.map(|id| self.contexts.hash(id)).unwrap_or(0))
     }
 
     /// `m_expansions.lookup(context)`: `None` when nothing has been written for
@@ -175,7 +198,7 @@ impl ReferenceState {
         context: Option<ContextId>,
     ) -> Option<Option<StructureId>> {
         self.expansions
-            .get(&structure)?
+            .get(&self.chain_key(structure, context))?
             .iter()
             .find(|(candidate_context, _)| self.contexts.same(*candidate_context, context))
             .map(|(_, expansion)| *expansion)
@@ -188,7 +211,8 @@ impl ReferenceState {
         context: Option<ContextId>,
         expansion: Option<StructureId>,
     ) {
-        let entries = self.expansions.entry(structure).or_default();
+        let key = self.chain_key(structure, context);
+        let entries = self.expansions.entry(key).or_default();
 
         match entries
             .iter_mut()
