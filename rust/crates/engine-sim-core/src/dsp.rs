@@ -602,6 +602,110 @@ impl ConvolutionFilter {
 
         (result_a, result_b)
     }
+
+    /// Two consecutive samples of *each* channel in one pass: four independent
+    /// chains where [`Self::f_pair`] has two.
+    ///
+    /// `f_pair` interleaves the two channels, which fills the pipeline for one
+    /// sample. Rendering two samples at once fills it again: `out(s)` and
+    /// `out(s+1)` are two more independent chains, so the loop keeps four
+    /// multiply-adds in flight instead of two. Measured at 1.66x `f_pair` on the
+    /// 5 636-tap response and 1.72x at 10 000 taps, on a machine where one chain
+    /// runs at 0.83 G mac/s and four at 3.30 (`docs/performance-options.md` §7.2).
+    ///
+    /// Exactness is [`Self::f_two`]'s argument applied to two filters: sample
+    /// `s+1`'s term at tap `i+1` reuses the register value sample `s` loads at
+    /// tap `i`, and each of the four accumulators adds its own terms in `f`'s
+    /// order -- the leading `h[0] * y` first, then ascending taps. Nothing is
+    /// reassociated, so the result is bit-identical to two `f_pair` calls, which
+    /// is what `paired_two_samples_of_two_channels_are_bit_identical` asserts.
+    ///
+    /// Returns `(a[s], a[s+1], b[s], b[s+1])`.
+    pub fn f_pair_two(
+        a: &mut Self,
+        x_a: f32,
+        y_a: f32,
+        b: &mut Self,
+        x_b: f32,
+        y_b: f32,
+    ) -> (f32, f32, f32, f32) {
+        let (na, oa) = (a.sample_count, a.shift_offset);
+        let (nb, ob) = (b.sample_count, b.shift_offset);
+
+        // The interleaved loop reads one register position for both channels, so
+        // it needs them to agree. They always do in the synthesizer (both filters
+        // are initialised together), and when they do not, two `f_pair` calls are
+        // exactly what `render_audio` would have done anyway.
+        if na != nb || oa != ob || na < 2 {
+            let (p, q) = Self::f_pair(a, x_a, b, x_b);
+            let (r, s) = Self::f_pair(a, y_a, b, y_b);
+            return (p, r, q, s);
+        }
+
+        let n = na;
+        let o = oa;
+        let boundary = n - o;
+        a.shift_register[o] = x_a;
+        b.shift_register[o] = x_b;
+
+        let mut a0 = 0.0f32;
+        let mut a1 = a.impulse_response[0] * y_a;
+        let mut b0 = 0.0f32;
+        let mut b1 = b.impulse_response[0] * y_b;
+
+        // Taps that sit before the wrap in the shift register ...
+        {
+            let ra = &a.shift_register[o..];
+            let rb = &b.shift_register[o..];
+            let ha = &a.impulse_response;
+            let hb = &b.impulse_response;
+
+            for i in 0..boundary.min(n - 1) {
+                let va = ra[i];
+                let vb = rb[i];
+                a0 += ha[i] * va;
+                a1 += ha[i + 1] * va;
+                b0 += hb[i] * vb;
+                b1 += hb[i + 1] * vb;
+            }
+        }
+
+        // ... then the ones after it. `a0` and `b0` get the last tap on their
+        // own, because the second sample has already taken `y` as its newest.
+        if o > 0 {
+            let last_a = a.shift_register[o - 1];
+            let last_b = b.shift_register[o - 1];
+            {
+                let ra = &a.shift_register[..o];
+                let rb = &b.shift_register[..o];
+                let ha = &a.impulse_response;
+                let hb = &b.impulse_response;
+
+                for i in boundary..n - 1 {
+                    let va = ra[i - boundary];
+                    let vb = rb[i - boundary];
+                    a0 += ha[i] * va;
+                    a1 += ha[i + 1] * va;
+                    b0 += hb[i] * vb;
+                    b1 += hb[i + 1] * vb;
+                }
+            }
+            a0 += a.impulse_response[n - 1] * last_a;
+            b0 += b.impulse_response[n - 1] * last_b;
+        } else {
+            let last_a = a.shift_register[n - 1];
+            let last_b = b.shift_register[n - 1];
+            a0 += a.impulse_response[n - 1] * last_a;
+            b0 += b.impulse_response[n - 1] * last_b;
+        }
+
+        a.shift_register[(o + n - 1) % n] = y_a;
+        b.shift_register[(o + n - 1) % n] = y_b;
+        a.shift_offset = (o + n - 2) % n;
+        b.shift_offset = (o + n - 2) % n;
+
+        (a0, a1, b0, b1)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1049,6 +1153,118 @@ mod tests {
 
             assert_eq!(actual_x.to_bits(), expected_x.to_bits());
             assert_eq!(actual_y.to_bits(), expected_y.to_bits());
+        }
+    }
+
+    /// `f_pair_two` has to be two `f_pair`s, bit for bit, at every wrap position
+    /// -- on short responses of every length, on the response the audio path
+    /// actually runs, and through the fallback that unequal filters take.
+    #[test]
+    fn paired_two_samples_of_two_channels_are_bit_identical() {
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed >> 11) as f32
+        };
+
+        // Every wrap phase of every short length: 2n + 3 steps walks the offset
+        // through the whole cycle twice.
+        for n in 2..=40usize {
+            let mut a = ConvolutionFilter::new();
+            let mut b = ConvolutionFilter::new();
+            a.initialize(n);
+            b.initialize(n);
+            for i in 0..n {
+                a.impulse_response_mut()[i] = next() / 1e6;
+                b.impulse_response_mut()[i] = next() / 1e6;
+            }
+            let mut pair_a = a.clone();
+            let mut pair_b = b.clone();
+
+            for step in 0..(2 * n + 3) {
+                let x_a = next() / 1e5;
+                let y_a = next() / 1e5;
+                let x_b = next() / 1e5;
+                let y_b = next() / 1e5;
+
+                let (want_a0, want_b0) = ConvolutionFilter::f_pair(&mut a, x_a, &mut b, x_b);
+                let (want_a1, want_b1) = ConvolutionFilter::f_pair(&mut a, y_a, &mut b, y_b);
+
+                let (a0, a1, b0, b1) =
+                    ConvolutionFilter::f_pair_two(&mut pair_a, x_a, y_a, &mut pair_b, x_b, y_b);
+
+                assert_eq!(a0.to_bits(), want_a0.to_bits(), "n = {n}, step {step}: a[s]");
+                assert_eq!(a1.to_bits(), want_a1.to_bits(), "n = {n}, step {step}: a[s+1]");
+                assert_eq!(b0.to_bits(), want_b0.to_bits(), "n = {n}, step {step}: b[s]");
+                assert_eq!(b1.to_bits(), want_b1.to_bits(), "n = {n}, step {step}: b[s+1]");
+            }
+        }
+
+        // The stereo assets' response: 10 000 taps, two wrap periods.
+        let n = 10_000;
+        let mut a = ConvolutionFilter::new();
+        let mut b = ConvolutionFilter::new();
+        a.initialize(n);
+        b.initialize(n);
+        for i in 0..n {
+            a.impulse_response_mut()[i] = ((i % 97) as f32 - 48.0) / 1000.0;
+            b.impulse_response_mut()[i] = ((i % 31) as f32 - 15.0) / 700.0;
+        }
+        let mut pair_a = a.clone();
+        let mut pair_b = b.clone();
+
+        for _ in 0..(2 * n) {
+            let x_a = next() / 1e5;
+            let y_a = next() / 1e5;
+            let x_b = next() / 1e5;
+            let y_b = next() / 1e5;
+
+            let (want_a0, want_b0) = ConvolutionFilter::f_pair(&mut a, x_a, &mut b, x_b);
+            let (want_a1, want_b1) = ConvolutionFilter::f_pair(&mut a, y_a, &mut b, y_b);
+
+            let (a0, a1, b0, b1) =
+                ConvolutionFilter::f_pair_two(&mut pair_a, x_a, y_a, &mut pair_b, x_b, y_b);
+
+            assert_eq!(a0.to_bits(), want_a0.to_bits());
+            assert_eq!(a1.to_bits(), want_a1.to_bits());
+            assert_eq!(b0.to_bits(), want_b0.to_bits());
+            assert_eq!(b1.to_bits(), want_b1.to_bits());
+        }
+
+        // Unequal lengths take the fallback, and must still be exactly two
+        // `f_pair`s.
+        let mut a = ConvolutionFilter::new();
+        let mut b = ConvolutionFilter::new();
+        a.initialize(29);
+        b.initialize(41);
+        for i in 0..41 {
+            let value = next() / 1e6;
+            if i < 29 {
+                a.impulse_response_mut()[i] = value;
+            }
+            b.impulse_response_mut()[i] = value;
+        }
+        let mut pair_a = a.clone();
+        let mut pair_b = b.clone();
+
+        for _ in 0..500 {
+            let x_a = next() / 1e5;
+            let y_a = next() / 1e5;
+            let x_b = next() / 1e5;
+            let y_b = next() / 1e5;
+
+            let (want_a0, want_b0) = ConvolutionFilter::f_pair(&mut a, x_a, &mut b, x_b);
+            let (want_a1, want_b1) = ConvolutionFilter::f_pair(&mut a, y_a, &mut b, y_b);
+
+            let (a0, a1, b0, b1) =
+                ConvolutionFilter::f_pair_two(&mut pair_a, x_a, y_a, &mut pair_b, x_b, y_b);
+
+            assert_eq!(a0.to_bits(), want_a0.to_bits());
+            assert_eq!(a1.to_bits(), want_a1.to_bits());
+            assert_eq!(b0.to_bits(), want_b0.to_bits());
+            assert_eq!(b1.to_bits(), want_b1.to_bits());
         }
     }
 

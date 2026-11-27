@@ -356,17 +356,30 @@ impl Synthesizer {
                 .set_jitter_scale(self.audio_parameters.input_sample_noise);
         }
 
-        // A mono signal is one dependent add chain per sample; two samples at a
-        // time fill the pipeline (`render_audio_pair`). Anything else, and the
-        // odd last sample of a block, goes through the one-sample path.
+        // A convolution is one dependent add per tap, so one sample at a time
+        // leaves the pipeline empty. Two samples at a time gives two chains for a
+        // mono signal (`render_audio_pair`) and four for a stereo one, where each
+        // channel contributes two (`render_audio_pair_stereo`). Anything else,
+        // and the odd last sample of a block, goes through the one-sample path.
         let mut i = 0;
 
-        if self.input_channel_count == 1 && self.filters[0].convolution.sample_count() >= 2 {
-            while i + 1 < n {
-                let (first, second) = self.render_audio_pair(i, rng);
-                self.audio_buffer.write(first);
-                self.audio_buffer.write(second);
-                i += 2;
+        if self.filters[0].convolution.sample_count() >= 2 {
+            if self.input_channel_count == 1 {
+                while i + 1 < n {
+                    let (first, second) = self.render_audio_pair(i, rng);
+                    self.audio_buffer.write(first);
+                    self.audio_buffer.write(second);
+                    i += 2;
+                }
+            } else if self.input_channel_count == 2
+                && self.filters[1].convolution.sample_count() >= 2
+            {
+                while i + 1 < n {
+                    let (first, second) = self.render_audio_pair_stereo(i, rng);
+                    self.audio_buffer.write(first);
+                    self.audio_buffer.write(second);
+                    i += 2;
+                }
             }
         }
 
@@ -483,6 +496,53 @@ impl Synthesizer {
         signal_0 += conv_amount * conv_0 + (1.0 - conv_amount) * v_0;
         let mut signal_1 = 0.0f32;
         signal_1 += conv_amount * conv_1 + (1.0 - conv_amount) * v_1;
+
+        (self.finish_sample(signal_0), self.finish_sample(signal_1))
+    }
+
+    /// Two consecutive samples of a stereo signal: `f_pair`'s two channels and
+    /// `f_two`'s two samples in one pass over the impulse responses, four
+    /// independent chains.
+    ///
+    /// The one-sample stereo path takes both channels' `rand()` draws for a
+    /// sample before moving on, so the draws here are taken in sample order --
+    /// channel 0 then channel 1 of `input_sample`, then the same two of
+    /// `input_sample + 1` -- and the tail runs one sample at a time, in order.
+    /// Every filter in the chain (jitter, DC, derivative, the shared air-noise
+    /// low pass, the leveler, the antialiaser) therefore advances exactly as it
+    /// does one sample at a time, which is what makes this bit-identical to two
+    /// `render_audio` calls rather than merely equivalent.
+    fn render_audio_pair_stereo(&mut self, input_sample: usize, rng: &mut Rng) -> (i16, i16) {
+        debug_assert_eq!(self.input_channel_count, 2);
+
+        let air_noise = self.audio_parameters.air_noise;
+        let df_f_mix = self.audio_parameters.df_f_mix;
+        let conv_amount = self.audio_parameters.convolution;
+
+        let v_0 = self.channel_input(0, input_sample, rng, air_noise, df_f_mix);
+        let v_1 = self.channel_input(1, input_sample, rng, air_noise, df_f_mix);
+        let w_0 = self.channel_input(0, input_sample + 1, rng, air_noise, df_f_mix);
+        let w_1 = self.channel_input(1, input_sample + 1, rng, air_noise, df_f_mix);
+
+        let (left, right) = self.filters.split_at_mut(1);
+        let (conv_0, conv_1, conv_2, conv_3) = ConvolutionFilter::f_pair_two(
+            &mut left[0].convolution,
+            v_0,
+            w_0,
+            &mut right[0].convolution,
+            v_1,
+            w_1,
+        );
+
+        // The first sample is the sum of both channels' first results, the second
+        // the sum of both second results, each accumulated in the same order
+        // `render_audio` accumulates them.
+        let mut signal_0 = 0.0f32;
+        signal_0 += conv_amount * conv_0 + (1.0 - conv_amount) * v_0;
+        signal_0 += conv_amount * conv_2 + (1.0 - conv_amount) * v_1;
+        let mut signal_1 = 0.0f32;
+        signal_1 += conv_amount * conv_1 + (1.0 - conv_amount) * w_0;
+        signal_1 += conv_amount * conv_3 + (1.0 - conv_amount) * w_1;
 
         (self.finish_sample(signal_0), self.finish_sample(signal_1))
     }
