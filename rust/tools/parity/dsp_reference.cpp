@@ -86,7 +86,10 @@ int main() {
 
     {
         ButterworthLowPassFilter<float> f;
-        f.setCutoffFrequency(10000.0f, 44100.0f);
+        // volatile: keep `tanf` a run-time call, as it is in production, so the
+        // gate does not encode this compiler's constant-folded `tanf`.
+        volatile float cutoff = 10000.0f;
+        f.setCutoffFrequency((float)cutoff, 44100.0f);
         for (int i = 0; i < n; ++i) {
             emit("bw_f32_10000", (double)f.fast_f((float)input_sample(i)));
         }

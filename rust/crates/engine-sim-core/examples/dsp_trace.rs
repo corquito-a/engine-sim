@@ -62,7 +62,9 @@ fn main() {
 
     {
         let mut f = ButterworthLowPassFilterF32::new();
-        f.set_cutoff_frequency(10000.0, 44100.0);
+        // `black_box`: keep `tan` a run-time call, as it is in production, so the
+        // gate does not encode this compiler's constant-folded `tan`.
+        f.set_cutoff_frequency(std::hint::black_box(10000.0), 44100.0);
         for i in 0..n {
             emit("bw_f32_10000", f.fast_f(input_sample(i) as f32) as f64);
         }
