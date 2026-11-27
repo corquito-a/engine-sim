@@ -15,6 +15,10 @@ Two of the candidates were prototyped and measured end to end (O1, O2). Both
 produced bit-identical output on every check available in this environment. The
 rest are estimates with the reasoning shown, so they can be argued with.
 
+This document is the *map*; [`performance-options.md`](performance-options.md) is
+the *decision*: every option for O1–O3, contested on pro / con / risk / outcome,
+with the design that came out of it and the order to land the pieces in.
+
 Numbers are from a 2-vCPU sandbox, `rustc 1.88.0` `--release`, single-threaded
 (the simulator has no threads). Absolute times move ±10% between runs; ratios and
 shares are stable to a few percent. Nothing here needs `perf`; the recipes are in
@@ -39,13 +43,14 @@ Ranked, with the discount already applied:
 | **O1** | bucket the expansion table by a structural hash of the context chain | `expand_all` **15×**, whole front end **5.6×** (`radial_9` 4.15 s → 0.74 s) | none observed: IR and graph dumps of all 21 scripts identical |
 | **O2** | convolution: two output samples per pass (mono), four chains for stereo | **1.98×** convolution on mono, 1.25× on stereo ⇒ ~10% of a frame | none: same operands, same order, per-sample bits compared |
 | **O3** | hoist `get_volume` out of the eight fluid sub-steps | 3–14% of the fluid loop ⇒ 2–4% of a frame | none: same value, same expression, one evaluation instead of eight |
-| **O4** | four chains instead of two for *stereo* convolution | 3.13 vs 2.50 G MAC/s on top of `f_pair` | none, same construction as O2 |
+| **O4** | four chains instead of two for *stereo* convolution | **unproven**: a single run showed 3.13 vs 2.50 G MAC/s, but mono two-sample chains reach 3.15 G MAC/s on their own (§6), so the stereo gap is more likely the 2-response stream pattern than the chain count. Measure before proposing. | layout or count — needs its own measurement |
 | **O5** | `build_graph` (0.45 s for `radial_9` after O1) | not yet attributed | unknown — needs its own profile |
 | **O6** | `chamber.update`, `sample_triangle`, dyno bookkeeping, the `Mutex` per step | 5% total, and the pieces are ≤ 100 ns | not worth the diff |
 
-If all of O1–O4 land, a `main.mr`-style mono run drops from 1.53 s to ~1.30 s of
-frame work and setup from 0.60 s to 0.18 s — **~25% end to end** — with no
-arithmetic touched. That is the honest ceiling for "free" speed in this codebase.
+With O1–O3 (and not O4, which is now unproven), a `main.mr`-style mono run drops
+from 1.53 s to ~1.30 s of frame work and setup from 0.60 s to 0.18 s — **~25% end
+to end** — with no arithmetic touched. That is the honest ceiling for "free" speed
+in this codebase.
 Everything beyond it is a physics decision (fewer sub-steps, shorter impulse
 response, `f32` in the gas path), and every one of those changes the output.
 
@@ -283,12 +288,20 @@ operands in the same order* as `f` would add them for that sample; `out(s+1)`'s
 leading `h[0]·y` is its first term, exactly as in `f`. Nothing is reassociated,
 nothing is widened, no product is reused across samples.
 
-| form | taps | MAC/s | vs one chain |
-|---|---|---|---|
-| `f`, one chain | 5 636 | 1.60 G | — |
-| `f_pair`, two channels (`main` never reaches this) | 5 636 | 2.50 G | 1.56× |
-| **`f_two`, one filter, two samples** | 5 636 | **3.18 G** | **1.98×** |
-| `f_quad`, two channels × two samples | 5 636 | 3.13 G | 1.96× (1.25× over `f_pair`) |
+| form | 5 636 taps | 10 000 taps | 5 979 taps | vs one chain |
+|---|---|---|---|---|
+| `f`, one chain | 1.58 G MAC/s | 1.58 | 1.49 | — |
+| `f_pair`, two channels (`main` never reaches this) | 2.48–2.55 | — | — | 1.56× |
+| **`f_two`, one filter, two samples** | **3.15** | 3.12 | 3.01 | **1.99×** |
+| four samples per pass (probe) | 3.29 | 3.29 | 3.29 | 2.08× |
+| `f_quad`, two channels × two samples (one run) | 3.13 | — | — | 1.96× |
+
+The probe is the important line: **four chains buy 4% over two** (2.08× against
+1.99×), because two independent adds already saturate the machine's add throughput
+at ~3.3 G MAC/s. Sample-parallelism has no headroom past two, so O2 stops there.
+The same measurement is why O4 above is demoted: `f_pair` reaching only 2.5 G MAC/s
+while a *one-register* two-chain form reaches 3.15 points at the two-response
+stream pattern, not at the number of chains.
 
 Bit-identity: `f_two` vs two `f` calls, **bit patterns compared** (not floats) for
 every wrap offset, `n = 2..40`, 1 000 consecutive pairs each — all equal, including
