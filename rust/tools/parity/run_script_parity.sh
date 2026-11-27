@@ -47,8 +47,10 @@
 #          leaving it out safe rather than merely convenient.
 #
 #   RUNNING every engine asset with the keys pressed: ignition on, the starter
-#          released after 0.3 s, wide open, free-revving, 8 000 frames -- all
-#          20 engines rather than the three `DRIVE` takes to two seconds.
+#          released after 0.3 s, wide open, free-revving, half a second of
+#          *engine* time (frames are timesteps, so the count comes from each
+#          engine's simulation frequency) -- all 20 engines rather than the three
+#          `DRIVE` takes to two seconds.
 #
 #   GRAPH  every script in `tools/parity/graph/` is built into a node graph by
 #          the original (`IrCompilationUnit::build`) and compared against the
@@ -349,7 +351,14 @@ drive_one drive_fallback "$DRIVE_FALLBACK" "$WORK/drive_fallback.ir"
 # and nine do not -- the Merlin's starter cannot turn it at all in that time -- and
 # both states are worth comparing, so the count is reported rather than required.
 echo "== gate RUNNING: every engine asset, cranking to running =="
-RUNNING_STEPS=8000
+#
+# A *frame* is one simulation step (`startFrame(timestep * 0.1)`), so a fixed
+# frame count is not a fixed amount of engine time: 8 000 frames was 0.20 s on the
+# 40 kHz TRX520 and 1.14 s on the 7 kHz Merlin, and the gate was quietly asking
+# the fast engines a much smaller question. The window is now 0.5 s of engine
+# time for every engine -- `SIMULATION_FREQUENCY / 2` frames -- which costs the
+# same total (the average engine is ~16 kHz) and means the same thing everywhere.
+RUNNING_SECONDS=0.5
 DRIVE_STARTER=0.3
 DRIVE_GEAR=
 DRIVE_CLUTCH=
@@ -358,7 +367,11 @@ running_fired=0
 
 for wrapper in "$HERE"/engines/engines_*.mr; do
     "$IR_DUMP" "$wrapper" > "$WORK/running.ir" 2>/dev/null || continue
-    drive_one "running_$(basename "$wrapper" .mr)" "$wrapper" "$WORK/running.ir" "$RUNNING_STEPS"
+
+    frequency=$("$GRAPH_DUMP" --engine "$wrapper" | awk -F, '$2 == "simulation_frequency" { print $3 }')
+    frames=$(python3 -c "import struct; print(int(round(struct.unpack('>d', bytes.fromhex('$frequency'))[0] * $RUNNING_SECONDS)))")
+
+    drive_one "running_$(basename "$wrapper" .mr)" "$wrapper" "$WORK/running.ir" "$frames"
     running_count=$((running_count + 1))
     trace="$WORK/running_$(basename "$wrapper" .mr).trace"
     # one process, not a pipe: under `pipefail` a satisfied `grep -q` is a SIGPIPE
@@ -370,7 +383,8 @@ done
 
 unset DRIVE_STARTER DRIVE_GEAR DRIVE_CLUTCH
 
-echo "-- $running_count engines, every checkpoint identical; $running_fired of them fire inside the window"
+echo "-- $running_fired of them catch inside it (the starter is released after 0.3 s,"
+echo "--   and half a second of cranking is not enough for the rest -- see the plan, 8.8)"
 
 # The node graph the IR generates: every fixture, plus every script under
 # `assets/`, against a live reference (`--record` rewrites the fixtures).
