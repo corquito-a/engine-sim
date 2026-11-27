@@ -21,9 +21,9 @@ this turn change a conclusion from last turn (O2 / O4 — see §2.6).
 
 | item | worth (measured) | verdict | evidence |
 |---|---|---|---|
-| **O1** expansion memo | `expand_all` 3.61 s → 0.23 s on `radial_9` (15×), whole setup 4.15 s → 0.74 s | **adopt E**, with the hash invariant asserted and a dump-diff gate; then **F** as a sequel, not an alternative | prototype measured; IR + graph dumps of 21 scripts identical; 184 tests |
-| **O2** mono convolution | 1.99× the convolution ⇒ ~10% of a `main.mr` frame | **adopt B only**; reject C (four chains) on measurement | prototype bit-verified `n = 2..40`, all wrap phases; k=2 vs k=4 timed |
-| **O3** volume per sub-step | 3% of a `main.mr` frame, 14% of `trx520`'s fluid loop | **adopt D+A** (one evaluation per timestep, threaded as a parameter), not the chamber cache | 36 ns × 8 sub-steps × cylinders, counted |
+| **O1** expansion memo | `expand_all` 3.61 s → 0.23 s on `radial_9` (15×), whole front end 4 115 ms → 747 ms | **landed** (`55b0983`), option E, with the hash invariant asserted; **F** remains a sequel, not an alternative | dumps of 21 scripts identical; 184 tests; all 13 oracle gates |
+| **O2** mono convolution | 1.99× the convolution ⇒ **14.3%** off a `main.mr` frame | **landed** (`0ea3870`), option B only; C (four chains) rejected on measurement | bit-verified `n = 2..40` and the real 5 636-tap response; k=2 vs k=4 timed |
+| **O3** volume per sub-step | 3% of a `main.mr` frame, ~3% of `trx520`'s | **landed** (`80e79e7`), option D+A (one evaluation per timestep, threaded as a parameter) | 36 ns × 8 sub-steps × cylinders, counted |
 
 ---
 
@@ -90,7 +90,9 @@ anyone proposes anything.
 impulse-response convolution. `ConvolutionFilter::f` is one dependent float add
 per tap, so a 5 636-tap response costs 5 636 add latencies per sample. `f_pair`
 already interleaves the two *channels*, which is why stereo assets are not twice
-as slow; `main.mr` is **mono**, so it never reaches `f_pair` and runs one chain.
+as slow — but two of the corpus's assets are **mono** (`main.mr` and
+`honda_trx520`; `radial_9`, `ferrari_412_t2` and `harley_shovelhead` are the
+stereo ones, as `synth_channels` in the trace shows), and those ran one chain.
 
 New measurements this turn (same machine, 88 200 samples, impulse response from
 `conv_bench`'s generator; each form bit-compared against `f` over `n = 5..39` at
@@ -229,11 +231,11 @@ gates, so preserving the baseline's bytes preserves parity with the original. It
 does **not** re-derive parity, and it cannot tell you whether the baseline was
 already wrong — that is what the gates are for.
 
-What was *not* done this session: running the 13 gates against the prototypes
-(staging the oracle takes ~45 s and the suite ~6 min; both were available and it
-was not done). That is the first thing the landing PR should do, and until it does,
-the status of O1–O3 is "bit-identical to the port" rather than "verified against the
-original".
+For the record, the argument was not left at that level: once the changes were in
+the tree, the oracle was staged (~45 s) and all 13 gates were run against it — 31
+`PASS` lines, exit 0, 280 s (was 350 s before O1). So O1–O3 are verified against
+the original directly, not only transitively. That run is also what caught the one
+wrong number in this document: the mono/stereo split above.
 
 ### 4.4 What I would add, and what would change my mind
 
@@ -280,3 +282,53 @@ reference's physics reproduced as written. Nothing in this document proposes to
 touch it, and nothing should: at that point the honest options (fewer sub-steps,
 shorter impulse response) all change the output, which is the one thing this port
 exists not to do.
+
+---
+
+## 6. What landed, and what it measures now
+
+Three commits on this branch, one per item, each verified before it went in:
+
+| commit | change | verification |
+|---|---|---|
+| `55b0983` | front end: bucket the expansion memo by a chain hash | `ir_dump`/`graph_dump` for all 21 scripts byte-identical; the `debug_assert` on the hash invariant green over the script corpus; 184 tests |
+| `80e79e7` | simulator: one chamber volume per timestep | `main.mr` (16 265 lines), `radial_9` (19 282) and `DRIVEN` (808 301 lines) traces byte-identical; 44.1 kHz WAV renders byte-identical |
+| `0ea3870` | audio: two samples per pass on the mono path | new bit test (every wrap phase of `n = 2..40`, plus the real 5 636-tap response); the same traces and WAVs byte-identical |
+
+End to end, best of six runs, frame loop only (setup excluded), measured by
+stashing the change and rebuilding, so both sides are the same binary
+configuration:
+
+| asset | channels | before | after | |
+|---|---|---|---|---|
+| `main.mr`, 2 s | mono | 1.559 s | **1.336 s** | **−14.3%** (1.28× → 1.50× real time) |
+| `honda_trx520`, 1 s | mono | 0.700 s | **0.498 s** | **−28.9%** (1.43× → 2.01×) |
+| `ferrari_412_t2`, 1 s | stereo | 0.812 s | 0.805 s | −0.9% (the `f_pair` path is untouched) |
+| `radial_9`, 1 s | stereo | 0.991 s | 1.000 s | +0.9% (noise) |
+
+Front end, same method: `radial_9` 4 115 ms → **747 ms** (5.5×), `main.mr`
+600 ms → 169 ms. Gate suite: **350 s → 280 s**.
+
+Two notes on that table, because they are the kind of thing that gets rounded off:
+
+* The first stereo measurement had `ferrari_412_t2` **5% slower**, which turned out
+  to be `finish_sample` not being inlined into the stereo path after it was
+  extracted from `render_audio`. `#[inline]` put it back at parity. A fifteen-line
+  refactor of a per-sample function is visible at 44 100 Hz.
+* The mono gains are larger than the profile predicted (14% against an expected
+  ~9% on `main.mr`; 29% against ~20% on `trx520`). The likely reason is that the
+  instrumentation's own overhead inflated the non-audio sections, so the audio
+  share read low. The measured end-to-end numbers are the ones to trust; §3–§4 of
+  the investigation are for attribution, not for arithmetic.
+
+Still open, unchanged from §5: **O5** (`build_graph`, 0.45 s on `radial_9` — now
+the largest single item in setup) and **O2b** (why the stereo `f_pair` reaches
+2.5 G MAC/s where a one-register two-chain form reaches 3.15). Both are
+measurements before they are proposals.
+
+One recommendation from §4.4 is deliberately *not* taken: the dump-diff gate. The
+`IR`, `GRAPH` and `VALUES` gates already compare those dumps against the **oracle**
+for all 40 scripts, which is strictly stronger than diffing the port against
+itself, and it would have cost ~8 MB of fixtures. The `debug_assert` covers the one
+thing the oracle cannot: a future edit to `is_equal` that the hash no longer
+mirrors.

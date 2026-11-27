@@ -24,14 +24,23 @@ re-read. They change the plan, so they come first.
 Everything else in `next-steps.md` stands.
 
 **Item 4 (performance) is investigated separately**:
-[`performance-investigation.md`](performance-investigation.md). Its conclusion for
-this plan is that two changes are worth taking *before* Phase 1, because every
-phase below runs the front end and the audio path many times: **O1** (bucket the
-expansion memo by a structural hash of the context chain — `expand_all` 3.61 s →
-0.23 s on `radial_9`, output bit-identical across all 21 scripts) and **O2** (a
-two-sample render path for mono convolution — 1.98x the convolution, bit-identical
-by construction and by test). Neither touches arithmetic. The rest of the
-investigation's list is 2–4% each and can wait.
+[`performance-investigation.md`](performance-investigation.md) (the profile) and
+[`performance-options.md`](performance-options.md) (the contested menu). Three of
+its findings have **landed** on this branch, before Phase 1, because every phase
+below runs the front end and the audio path many times:
+
+* `55b0983` — the expansion memo is bucketed by a context chain hash. `radial_9`'s
+  front end went from 4 115 ms to **747 ms**; the gate suite from **350 s to 280 s**.
+* `80e79e7` — one chamber volume per timestep instead of nine reads.
+* `0ea3870` — two samples per pass on the mono convolution path: **−14.3%** of a
+  `main.mr` frame, **−28.9%** of a `trx520` frame.
+
+All three are bit-identical on every check available (the 13 oracle gates included)
+and none touches a formula. **The cost table below was measured before them**, so
+Phase 0's estimates are pessimistic by ~20% on anything that starts the front end;
+re-measure rather than re-estimate when the phase is picked up. The rest of the
+investigation's list (O5 `build_graph`, O2b the stereo layout) is measurement work,
+not code, and can wait.
 
 ---
 

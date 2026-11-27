@@ -86,7 +86,10 @@ claims are always clean.
 ## 3. The frame, in full
 
 `assets/main.mr`, 2 s of audio at 40 kHz, 109 frames, 88 207 output samples,
-clean wall **1.49–1.53 s**, setup 0.60 s. Instrumented:
+clean wall **1.49–1.53 s**, setup 0.60 s. (After O1–O3 landed this is 1.34 s of
+frame work and 0.17 s of setup; the tables below are the pre-change profile that
+motivated them. What landed, and what it measures, is §6 of
+[`performance-options.md`](performance-options.md).) Instrumented:
 
 | section | total | calls | per call | share (of 1.70 s) |
 |---|---|---|---|---|
@@ -144,9 +147,9 @@ step — visible, but not dominant.
 |---|---|---|---|---|---|---|---|
 | `assets/main.mr` | 40 003 | **59%** | 16% | 18% | 4.7% | 5 636 | 1 |
 | `radial_9` | 7 590 | **33%** | **30%** | **34%** | 3.1% | 10 000 | 2 |
-| `honda_trx520` | 40 370 | **45%** | 12% | 37% | 2.6% | 10 000 | 2 |
-| `ferrari_412_t2` | 5 060 | 39% | 28% | 28% | 4.1% | 5 979 | 1 |
-| `harley_shovelhead` | 35 310 | **53%** | 15% | 25% | 3.7% | 5 979 | 1 |
+| `honda_trx520` | 40 370 | **45%** | 12% | 37% | 2.6% | 10 000 | 1 |
+| `ferrari_412_t2` | 5 060 | 39% | 28% | 28% | 4.1% | 5 979 | 2 |
+| `harley_shovelhead` | 35 310 | **53%** | 15% | 25% | 3.7% | 5 979 | 2 |
 
 Two regularities fall out, and they generalise the rest of this document:
 
@@ -272,9 +275,10 @@ per tap. On a 5 636-tap response that is 5 636 × ~4 cycles of latency that noth
 else can fill, which is why `f_pair` (two channels interleaved) already exists and
 documents the trick.
 
-What is missing is the case `main.mr` actually uses: **one** input channel. There
-`render_audio` calls `f` on a single filter, so the audio path is one serial chain
-at 1.60 G MAC/s. Two *consecutive output samples* of the same filter are two
+What is missing is the case the two **mono** assets in the corpus use (`main.mr`
+and `honda_trx520`; the others are stereo, per `synth_channels` in the trace).
+There `render_audio` calls `f` on a single filter, so the audio path is one serial
+chain at 1.60 G MAC/s. Two *consecutive output samples* of the same filter are two
 independent chains, and the second one's sum can be formed from the first one's
 register:
 
@@ -427,20 +431,15 @@ those.
 
 ## 11. Recommendation
 
-1. **Land O1 now, on its own PR.** It is a front-end indexing change with no
-   arithmetic in it, its exactness evidence is already collected and cheap to
-   re-run (`ir_dump`/`graph_dump` `diff -r`, `cargo test`), and it makes every
-   subsequent gate and every developer iteration 3–5× cheaper to start. It also
-   *reduces the risk* of the rest of the plan: the drivetrain and CI phases both
-   run the front end dozens of times per invocation.
-2. **Land O2 with it or immediately after**, wired into `Synthesizer` as a
-   two-sample render path with a tail, gated by `WAVE` plus a new unit test that
-   asserts `f_two` equals two `f`s on the real 5 636-tap response (the prototype's
-   bit comparison of `n = 2..40` becomes a test, not a throwaway bench).
-3. **Take O3 in the same PR as the next change to `simulator.rs`** — it is four
-   lines and the corpus verifies it.
+1. ~~**Land O1 now, on its own PR.**~~ **Landed** (`55b0983`): 4 115 ms → 747 ms on
+   `radial_9`'s front end, 350 s → 280 s for the gate suite.
+2. ~~**Land O2 with it or immediately after**~~ **Landed** (`0ea3870`), with the
+   bit test that this document asked for, and gated by the same traces.
+3. ~~**Take O3 in the same PR as the next change to `simulator.rs`**~~ **Landed**
+   (`80e79e7`); the corpus traces are byte-identical with it.
 4. **Do not take O5, or anything in §8, without a profile of its own.** In
-   particular: `build_graph` is now the second-largest setup cost and nobody has
+   particular: `build_graph` is now the largest single setup cost (0.45 s on
+   `radial_9`, after the rest of the front end fell to 0.24 s) and nobody has
    looked inside it.
 5. **Correct the plan's numbers** in the PR that lands O1: `docs/implementation-plan.md`
    quotes the suite's 5 m 50 s and per-engine setup as fixed constants. After O1,
