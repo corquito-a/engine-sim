@@ -19,7 +19,7 @@ than in adjectives.
 | C++ oracle, from scratch | 10 s to clone `piranha`, **45 s** to stage both reference libraries, 5 s to link |
 | one drivetrain-sized run | 930 ms on the port for 20 000 frames / 764 159 checkpoints; the oracle is about the same again, plus the diff |
 | engine wrappers | 20, all with a `vehicle(...)` and a `transmission(...)` of their own |
-| real time | 1.30 x average, slowest asset 1.02 x, setup 0.4–0.7 s (4.0 s for the nine-cylinder radial) — **on the machine that recorded it**. A 2.60 GHz Xeon, same code: 1.06 x average, slowest 0.86 x (`ferrari_f136_v8`), setup 0.11–0.41 s after O1/O5a. The original is 0.75 x average there, so the port still wins every asset, but the absolute figure is a property of the box |
+| real time | 1.30 x average, slowest asset 1.02 x, setup 0.4–0.7 s (4.0 s for the nine-cylinder radial) — **on the machine that recorded it**. A 2.60 GHz Xeon, same code with the fat-LTO profile: **1.11 x average, slowest 0.88 x** (`radial_9`), setup 0.11–0.41 s after O1/O5a; without fat LTO the same box gives 1.06 x / 0.86 x. See [`toolchain-performance.md`](toolchain-performance.md). The original is 0.75 x average there, so the port still wins every asset, but the absolute figure is a property of the box |
 | shell upstream | `engine_sim_application.cpp` 1 136 lines + `ui_*` 842 + `application_settings.h`; assessment §9 prices the Windows/Direct3D glue at ~35 k LOC, not portable |
 | CI today | `.github/workflows/cmake.yml`: Windows, CMake, **C++ only**. Nothing builds `rust/`; no gate runs anywhere but a person's shell |
 
