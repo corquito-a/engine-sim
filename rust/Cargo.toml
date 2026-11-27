@@ -14,7 +14,15 @@ repository = "https://github.com/Engine-Simulator/engine-sim"
 
 [profile.release]
 opt-level = 3
-lto = "thin"
+# Fat LTO, measured: on a 2.60 GHz Xeon it renders radial_9 in 1.167 s against
+# thin LTO's 1.412 s and f136_v8 in 1.137 s against 1.370 s -- 14% on average
+# across four assets, at ~30% more build time. It emits the same bits (verified
+# by the DSP and core traces, the WAV renders and the parity gates).
+#
+# `-C target-cpu=native` is worth a further 1-2% on some assets and is *not*
+# additive with this: fat LTO plus a wide target came out 3-8% slower than
+# either alone, twice. See docs/toolchain-performance.md before combining flags.
+lto = "fat"
 codegen-units = 1
 # Do not enable fast-math style transformations anywhere in this workspace: the
 # audio and gas-dynamics code is tuned around the exact C++ operation order.
