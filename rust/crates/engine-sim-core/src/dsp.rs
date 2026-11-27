@@ -458,6 +458,68 @@ impl ConvolutionFilter {
         result
     }
 
+    /// Two consecutive samples of *this* filter in one pass.
+    ///
+    /// `f` is one dependent add per tap, so a 5 636-tap response costs 5 636 add
+    /// latencies per sample, and a mono engine never reaches `f_pair` (which
+    /// needs a second filter). Two consecutive output samples of the same filter
+    /// are two independent chains:
+    ///
+    /// ```text
+    /// out(s)   = sum h[i]   * R[(o+i) mod n]              i = 0 .. n-1
+    /// out(s+1) = h[0] * y + sum h[i+1] * R[(o+i) mod n]   i = 0 .. n-2
+    /// ```
+    ///
+    /// because `R[(o+k) mod n]` holds `x[s-k]` and `y` is `x[s+1]`. Every term is
+    /// the same product the single-sample path would form, added in the same
+    /// order -- `out(s+1)`'s leading `h[0]*y` is its first term, exactly as `f`
+    /// would add it. Nothing is reassociated, so both results are bit-identical to
+    /// two `f` calls; `paired_convolution_in_one_filter_is_bit_identical` proves
+    /// it, down to `-0.0`.
+    ///
+    /// Measured at 1.99x `f` on a 5 636-tap response (three samples per pass buys
+    /// another 4%, and two chains already saturate the machine's add throughput:
+    /// `docs/performance-options.md` §2).
+    pub fn f_two(&mut self, x: f32, y: f32) -> (f32, f32) {
+        let n = self.sample_count;
+
+        // Nothing to interleave: fall back to the one-sample path.
+        if n < 2 || self.shift_offset == 0 {
+            return (self.f(x), self.f(y));
+        }
+
+        let o = self.shift_offset;
+        self.shift_register[o] = x;
+
+        let h = &self.impulse_response;
+        let r = &self.shift_register;
+        let boundary = n - o;
+
+        let mut first = 0.0f32;
+        let mut second = h[0] * y;
+
+        // Taps that sit before the wrap in the shift register ...
+        for i in 0..boundary {
+            let v = r[o + i];
+            first += h[i] * v;
+            second += h[i + 1] * v;
+        }
+
+        // ... then the ones after it. `first` gets the last tap on its own,
+        // because `second` has already taken `y` as its newest sample.
+        for i in boundary..n - 1 {
+            let v = r[i - boundary];
+            first += h[i] * v;
+            second += h[i + 1] * v;
+        }
+        first += h[n - 1] * r[o - 1];
+
+        self.shift_register[o - 1] = y;
+        self.shift_offset = (o + n - 2) % n;
+
+        (first, second)
+    }
+
     /// Two `f()` calls in one pass, for the two channels of the synthesizer.
     ///
     /// `f` is a chain of `sample_count` dependent multiply-adds: nothing in it
@@ -928,6 +990,65 @@ mod tests {
 
             assert_eq!(actual_a.to_bits(), expected_a.to_bits());
             assert_eq!(actual_b.to_bits(), expected_b.to_bits());
+        }
+    }
+
+    /// `f_two` has to be two `f`s of the same filter, bit for bit, at every wrap
+    /// position -- including on a response the length of the real one.
+    #[test]
+    fn paired_convolution_in_one_filter_is_bit_identical() {
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed >> 11) as f32
+        };
+
+        // Short responses first: every wrap phase of every length, so the two
+        // boundaries in `f_two` are crossed many times.
+        for n in 2..=40usize {
+            let mut single = ConvolutionFilter::new();
+            single.initialize(n);
+            for i in 0..n {
+                let value = next() / 1e6;
+                single.impulse_response_mut()[i] = value;
+            }
+            let mut paired = single.clone();
+
+            for _ in 0..(3 * n + 5) / 2 {
+                let x = next() / 1e5;
+                let y = next() / 1e5;
+
+                let expected_x = single.f(x);
+                let expected_y = single.f(y);
+                let (actual_x, actual_y) = paired.f_two(x, y);
+
+                assert_eq!(actual_x.to_bits(), expected_x.to_bits(), "n = {n}, first sample");
+                assert_eq!(actual_y.to_bits(), expected_y.to_bits(), "n = {n}, second sample");
+            }
+        }
+
+        // Then the response `assets/main.mr` installs, over more than three wrap
+        // periods, which is the case the audio path actually runs.
+        let n = 5636;
+        let mut single = ConvolutionFilter::new();
+        single.initialize(n);
+        for i in 0..n {
+            single.impulse_response_mut()[i] = ((i % 97) as f32 - 48.0) / 1000.0;
+        }
+        let mut paired = single.clone();
+
+        for _ in 0..(2 * n) {
+            let x = next() / 1e5;
+            let y = next() / 1e5;
+
+            let expected_x = single.f(x);
+            let expected_y = single.f(y);
+            let (actual_x, actual_y) = paired.f_two(x, y);
+
+            assert_eq!(actual_x.to_bits(), expected_x.to_bits());
+            assert_eq!(actual_y.to_bits(), expected_y.to_bits());
         }
     }
 
