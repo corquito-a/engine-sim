@@ -379,14 +379,20 @@ impl CombustionChamber {
     }
 
     /// `CombustionChamber::update`
+    ///
+    /// `volume` is the chamber volume the caller already read for this timestep
+    /// (see `Simulator::simulate_step_internal`): the reference reads
+    /// `getVolume(bodies)` here and again at the top of every `flow` call in the
+    /// same timestep, and the bodies do not move in between.
     pub fn update(
         &mut self,
         bodies: &[RigidBody],
+        volume: f64,
         crank_angle: f64,
         crank_cycle_angle: f64,
         vtec: bool,
     ) {
-        self.system.set_volume(self.get_volume(bodies));
+        self.system.set_volume(volume);
 
         self.update_cycle_states(crank_cycle_angle, bodies);
 
@@ -415,18 +421,19 @@ impl CombustionChamber {
     }
 
     /// `CombustionChamber::flow`
+    /// `volume` is the chamber volume for this timestep, read once by the caller
+    /// instead of once per fluid sub-step: `getVolume(bodies)` depends only on the
+    /// piston body's position, which the solver does not touch between them.
     pub fn flow(
         &mut self,
         dt: f64,
-        bodies: &[RigidBody],
+        bodies_volume: f64,
         intakes: &mut [Intake],
         exhausts: &mut [ExhaustSystem],
     ) {
         if self.system.temperature() > self.peak_temperature {
             self.peak_temperature = self.system.temperature();
         }
-
-        let bodies_volume = self.get_volume(bodies);
 
         let cylinder_height = bodies_volume / self.cylinder_cross_section_surface_area;
         let cylinder_surface_area = cylinder_height

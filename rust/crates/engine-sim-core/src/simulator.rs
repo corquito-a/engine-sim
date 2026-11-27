@@ -66,6 +66,11 @@ pub struct Simulator {
 
     pub fluid_simulation_steps: usize,
     pub exhaust_flow_staging_buffer: Vec<f64>,
+    /// One chamber volume per cylinder for the current timestep. `getVolume` is
+    /// read once per timestep here and consumed by `chamber.update` and by every
+    /// one of the fluid sub-steps' `chamber.flow` calls; the bodies do not move
+    /// inside `simulate_step_internal`, so those are one value, not nine reads.
+    pub chamber_volumes: Vec<f64>,
 
     pub rng: Rng,
 }
@@ -101,6 +106,7 @@ impl Simulator {
             vehicle_mass_body: usize::MAX,
             fluid_simulation_steps: 8,
             exhaust_flow_staging_buffer: Vec::new(),
+            chamber_volumes: Vec::new(),
             rng: Rng::default(),
         };
 
@@ -337,6 +343,7 @@ impl Simulator {
         self.engine.ignition.reset(cycle_angle);
 
         self.exhaust_flow_staging_buffer = vec![0.0; self.engine.get_exhaust_system_count()];
+        self.chamber_volumes = vec![0.0; cylinder_count];
 
         // `PistonEngineSimulator::placeAndInitialize`: one delay filter per
         // cylinder, from the header-primary + exhaust pipe length.
@@ -613,13 +620,26 @@ impl Simulator {
             }
         }
 
+        // The chamber volume depends only on where the piston is, and the solver
+        // has already run for this timestep: read it once per cylinder and hand
+        // the same value to `update` and to every fluid sub-step below.
+        if self.chamber_volumes.len() != cylinder_count {
+            self.chamber_volumes.resize(cylinder_count, 0.0);
+        }
+
+        for i in 0..cylinder_count {
+            self.chamber_volumes[i] =
+                self.engine.chambers[i].get_volume(&self.solver.bodies);
+        }
+
         for i in 0..cylinder_count {
             let bodies = &self.solver.bodies;
             let bank_index = self.engine.pistons[i].bank.index().max(0) as usize;
             let vtec_enabled = self.engine.heads[bank_index]
                 .valvetrain
                 .is_vtec_enabled(&vtec);
-            self.engine.chambers[i].update(bodies, crank_angle, cycle_angle, vtec_enabled);
+            let volume = self.chamber_volumes[i];
+            self.engine.chambers[i].update(bodies, volume, crank_angle, cycle_angle, vtec_enabled);
         }
 
         for i in 0..cylinder_count {
@@ -642,7 +662,7 @@ impl Simulator {
             for j in 0..cylinder_count {
                 self.engine.chambers[j].flow(
                     fluid_timestep,
-                    &self.solver.bodies,
+                    self.chamber_volumes[j],
                     &mut self.engine.intakes,
                     &mut self.engine.exhausts,
                 );
