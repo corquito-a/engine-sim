@@ -44,7 +44,7 @@ Ranked, with the discount already applied:
 | **O2** | convolution: two output samples per pass (mono), four chains for stereo | **1.98×** convolution on mono, 1.25× on stereo ⇒ ~10% of a frame | none: same operands, same order, per-sample bits compared |
 | **O3** | hoist `get_volume` out of the eight fluid sub-steps | 3–14% of the fluid loop ⇒ 2–4% of a frame | none: same value, same expression, one evaluation instead of eight |
 | **O4** | four chains instead of two for *stereo* convolution | **unproven**: a single run showed 3.13 vs 2.50 G MAC/s, but mono two-sample chains reach 3.15 G MAC/s on their own (§6), so the stereo gap is more likely the 2-response stream pattern than the chain count. Measure before proposing. | layout or count — needs its own measurement |
-| **O5** | `build_graph` (0.45 s for `radial_9` after O1) | not yet attributed | unknown — needs its own profile |
+| **O5** | `build_graph` (0.45 s for `radial_9` after O1; 0.118 s on the 2026-11-23 machine) | **measured**: one linear scan over 384-byte nodes, 101 M visits; a structure bucket is 3× | `rg` — verified byte-identical on 23 scripts |
 | **O6** | `chamber.update`, `sample_triangle`, dyno bookkeeping, the `Mutex` per step | 5% total, and the pieces are ≤ 100 ns | not worth the diff |
 
 With O1–O3 (and not O4, which is now unproven), a `main.mr`-style mono run drops
@@ -301,11 +301,21 @@ nothing is widened, no product is reused across samples.
 | `f_quad`, two channels × two samples (one run) | 3.13 | — | — | 1.96× |
 
 The probe is the important line: **four chains buy 4% over two** (2.08× against
-1.99×), because two independent adds already saturate the machine's add throughput
-at ~3.3 G MAC/s. Sample-parallelism has no headroom past two, so O2 stops there.
-The same measurement is why O4 above is demoted: `f_pair` reaching only 2.5 G MAC/s
-while a *one-register* two-chain form reaches 3.15 points at the two-response
-stream pattern, not at the number of chains.
+1.99×), because on *this* machine two independent adds already saturate the add
+throughput at ~3.3 G MAC/s. Sample-parallelism has no headroom past two here, so
+O2 stopped at two. The same measurement is why O4 above is demoted: `f_pair`
+reaching only 2.5 G MAC/s while a *one-register* two-chain form reaches 3.15
+points at the two-response stream pattern, not at the number of chains.
+
+**That conclusion did not survive a change of machine** (2026-11-23, a Xeon at
+2.60 GHz where one chain manages 0.83 G MAC/s rather than 1.58): there, four
+chains reached 3.30 G — 4× one chain, 2× two — and `f_pair` and `f_two` came out
+*identical* at 1.65 G, so the two-response stream pattern costs nothing at 22 KB.
+Both machines agree on the useful part: a four-chain form is never slower (1.04×
+here, 2.0× there, 1.96× for the stereo version in the `f_quad` probe). Which of
+the two ratios a given CPU gives you is a fact about its load ports, and it has to
+be measured rather than assumed — `pair_bench` exists to measure it:
+[`performance-options.md`](performance-options.md) §7.2.
 
 Bit-identity: `f_two` vs two `f` calls, **bit patterns compared** (not floats) for
 every wrap offset, `n = 2..40`, 1 000 consecutive pairs each — all equal, including
@@ -361,7 +371,7 @@ engines with the most to gain are the high-frequency four-cylinders
 | `write_to_synthesizer` | 173 ns/step, 0.4% | already avoids the per-cylinder `head` clone that used to dominate the radial (comment in the code records it) |
 | `start_frame` / `end_frame` | 0.02 ms per frame, ~0% | nothing there |
 | `assert!(force.is_finite())` in `apply` | inside the 193 ns apply | keep it: it is a compare, and it is the only cheap guard that turns a NaN into a panic instead of into silent garbage |
-| `build_graph` | 0.45 s for `radial_9` after O1 (was 0.66 s) | **O5**: now the largest single item in setup, and unattributed. A `graph` build should be linear; profile it before proposing anything |
+| `build_graph` | 0.45 s for `radial_9` after O1 (was 0.66 s); 0.118 s on the 2026-11-23 machine | **O5**: measured — it is *one linear scan* (101 M node visits, 625 KB per pass) and buckets to 0.034-0.043 s. See [`performance-options.md`](performance-options.md) §7.1 |
 | `GasSystem::flow`'s `powf`/`sqrt` | ~30 ns each, a handful per sub-step | `powf(x, k)` → repeated multiplication is **not** bit-identical (libm's `powf` is not correctly rounded, and `x*x*x` differs in ulps). Off limits — this is the single most tempting wrong answer in the gas path |
 | fluid sub-step count (8) | 59% of a frame scales directly | this is a *physics* parameter of the reference; halving it would halve the cost and change every number. Off limits |
 
@@ -437,10 +447,12 @@ those.
    bit test that this document asked for, and gated by the same traces.
 3. ~~**Take O3 in the same PR as the next change to `simulator.rs`**~~ **Landed**
    (`80e79e7`); the corpus traces are byte-identical with it.
-4. **Do not take O5, or anything in §8, without a profile of its own.** In
-   particular: `build_graph` is now the largest single setup cost (0.45 s on
-   `radial_9`, after the rest of the front end fell to 0.24 s) and nobody has
-   looked inside it.
+4. **O5 has now had the profile it needed.** `build_graph` is `cached_instance`:
+   on `radial_9` it scans 101 million nodes to resolve 140 124 lookups, 99.5% of
+   the scans discarded by the `ir_structure` test, at 384 bytes a node. Bucketing
+   nodes by structure takes it from 0.118 s to 0.034-0.043 s with byte-identical
+   graphs for all 23 scripts. Nothing else in the front end is over 10 ms; see
+   [`performance-options.md`](performance-options.md) §7.
 5. **Correct the plan's numbers** in the PR that lands O1: `docs/implementation-plan.md`
    quotes the suite's 5 m 50 s and per-engine setup as fixed constants. After O1,
    the setup component of `RUNNING` (20 engines) drops from ~16 s to ~4 s, and the

@@ -321,10 +321,10 @@ Two notes on that table, because they are the kind of thing that gets rounded of
   share read low. The measured end-to-end numbers are the ones to trust; §3–§4 of
   the investigation are for attribution, not for arithmetic.
 
-Still open, unchanged from §5: **O5** (`build_graph`, 0.45 s on `radial_9` — now
-the largest single item in setup) and **O2b** (why the stereo `f_pair` reaches
-2.5 G MAC/s where a one-register two-chain form reaches 3.15). Both are
-measurements before they are proposals.
+The two items left open in §5 — **O5** (`build_graph`) and **O2b** (why the
+stereo path reaches 2.5 G MAC/s where a two-chain form reaches 3.15) — were
+measured next; §7 is that report, and both turned out differently from what this
+section assumed.
 
 One recommendation from §4.4 is deliberately *not* taken: the dump-diff gate. The
 `IR`, `GRAPH` and `VALUES` gates already compare those dumps against the **oracle**
@@ -332,3 +332,152 @@ for all 40 scripts, which is strictly stronger than diffing the port against
 itself, and it would have cost ~8 MB of fixtures. The `debug_assert` covers the one
 thing the oracle cannot: a future edit to `is_equal` that the hash no longer
 mirrors.
+
+---
+
+## 7. The two open questions, measured
+
+*Measured 2026-11-23 on a fresh sandbox: Intel Xeon at 2.60 GHz (two cores),
+`rustc 1.100.0`. **The absolute numbers in §6 came from a different machine and a
+different compiler and are not comparable with these** — this machine renders
+`main.mr` in 1.81–1.90 s where §6's table says 1.336 s. Everything below is either
+a ratio measured on one machine in one session, or a count, which does not care.
+Ratios are the part that travels; treat the absolute times as local.*
+
+Three measurements were added to make this reproducible: `front_end_bench`
+(`engine-sim-script`), `pair_bench` and `pair_two_proto` (`engine-sim-core`).
+The counters in §7.1 were temporary instrumentation and are not in the tree.
+
+### 7.1 O5: `build_graph` is one linear scan, and it is most of the phase
+
+Phase timings, best of four runs:
+
+| phase | `main.mr` | `radial_9` |
+|---|---|---|
+| parse + load | 0.003 s | 0.003 s |
+| lower | 0.002 s | 0.002 s |
+| resolve | 0.001 s | 0.002 s |
+| `expand_all` | 0.036 s | 0.095 s |
+| `build_graph` | 0.014 s | **0.118 s** |
+| total | 0.057 s | 0.222 s |
+
+`expand_all` is what O1 fixed; `build_graph` is now the larger half on a big
+engine. Counters, on `radial_9`:
+
+| | count |
+|---|---|
+| `generate_node` calls | 116 493 |
+| — of those, uncached (real work) | 107 807 |
+| `cached_instance` calls | 140 124 |
+| **nodes scanned inside them** | **101 227 701** |
+| scans that got as far as comparing contexts | 484 070 |
+| `container_for` calls / containers scanned | 5 178 / 1 604 615 |
+| `find_node_in_tree` calls / entries scanned | 2 085 359 / 4 146 233 |
+| `kind()` clones | 107 807 (5.0 ms total, 46 ns each) |
+
+`GraphNode` is **384 bytes**, so one full scan of this graph walks **625 KB** —
+it does not fit in L1 and barely fits in L2. 101 million scans at ~1.2 ns each is
+0.12 s: `build_graph` **is** `cached_instance`, and 99.5% of that work is thrown
+away by the `ir_structure` test alone (only 484 070 of 101 227 701 scans reach a
+context comparison).
+
+**Prototype.** Bucket the nodes by `ir_structure` (`RefCell<HashMap>` on the
+`Graph`, appended lazily as the node list grows) and scan only the matching
+bucket, still confirming with `contexts.same`:
+
+    build_graph, radial_9:   0.118 s  ->  0.034-0.043 s   (3x)
+    front end total:         0.222 s  ->  0.140 s         (-37%)
+
+and the graphs are **byte-identical for all 23 scripts** in the repository
+(`graph_dump` diffed against the unmodified tree).
+
+Why it is exact, in the same terms as O1: the bucket is appended in node order, so
+`find` returns the first node in graph order that `cached_instance` would have
+returned, and the context comparison still decides. A bucket only narrows the
+scan; it cannot change which node wins. The one invariant is that a node's
+`ir_structure` is final by the time it is indexed — it is assigned once, at the
+three creation sites in `generate_node_ires_node`/`_uncached`, before the node is
+returned to any caller, and the lazy append happens at the *start* of a later
+`cached_instance` call. That is worth a `debug_assert` (every node with a
+structure is in its bucket, checked when the build ends), not a comment.
+
+What is left after it (0.034 s) is 107 807 real node generations including 5 ms of
+`kind()` clones, 2.09 M `find_node_in_tree` calls and 1.6 M container scans —
+each of those is ≤10 ms, so **this is the last big item in the front end**.
+
+### 7.2 O2b: this machine wants four chains, so the stereo path has 1.7x left
+
+The convolution at 5 636 taps (best of three, 2.60 GHz). "cycles/FMA" divides the
+measured time by the cycles in it, so one chain's 3.1 is the add's latency:
+
+| kernel | chains | G mac/s | cycles/FMA |
+|---|---|---|---|
+| `f` | 1 | 0.83 | 3.1 |
+| `f_two` (shipped mono path) | 2 | 1.65 | 1.55 |
+| `f_pair` (shipped stereo path) | 2 | 1.65 | 1.55 |
+| shape: 3 samples x 1 filter | 3 | 2.48 | 1.03 |
+| shape: 4 samples x 1 filter | 4 | **3.30** | 0.79 |
+| shape: 2 samples x 2 channels | 4 | **3.31** | 0.79 |
+
+**The §2 conclusion that "two chains already saturate the machine" was
+machine-specific and is false here.** Four independent chains run 4x a single one,
+at 0.79 cycles a multiply-add — close to the load-port limit of the loop body (one
+shift-register load plus four response loads per tap). The shape bench is a
+predictor rather than a claim: it reproduces `f_two` and `f_pair` to within a
+percent, and it says mono has another 2x and stereo another 2x before
+saturation.
+
+**Prototype.** `pair_two` — two consecutive samples of *each* channel in one pass,
+four chains, each output keeping `f`'s order (leading `h[0]*y` first, taps
+ascending), with the wrap region split per channel:
+
+| | 5 636 taps | 10 000 taps |
+|---|---|---|
+| `f_pair` (shipped) | 1.64 G | 1.49 G |
+| `pair_two` (prototype) | 2.72 G | 2.57 G |
+| speed-up | **1.66x** | **1.72x** |
+
+Bit-checked against four `f` calls at every wrap phase of `n = 2..39` and at four
+phases of the real 5 636-tap response, comparing `to_bits()` — 2 593 groups, all
+identical. Three things it also measured:
+
+* **Slicing the registers to remove bounds checks made it slower** (2.63 vs
+  2.72 G): the indexing was already free, so the real kernel should stay written
+  the way `f_two` is.
+* **Interleaving the two responses into one array changed nothing** (1.65 vs
+  1.66 G at 5 636 taps): at 22 KB a response the loop is not traffic-bound. At
+  10 000 taps it partly is — `f_pair` drops to 1.49 G while the one-response
+  `f_two` holds 1.65 — which is why the prototype's margin is *larger* there.
+* A four-chain kernel reaches 2.7 G of the shape bench's 3.3 G. The 20% is the
+  wrap split and the per-pass tail: **1.7x, not 2x, is the realistic ceiling.**
+
+**What it would be worth** (projection, from the audio share implied by the
+measured `G mac/s` and the frame times on this machine — treat as an estimate):
+
+| asset | frame | audio | with a 4-chain path |
+|---|---|---|---|
+| `radial_9` (stereo, 10 000) | 1.46 s | ~0.59 s | ~1.22 s (−16%) |
+| `honda_trx520` (mono, 10 000) | — | — | mono, so O2 applies, not this |
+| `ferrari_412_t2` / `shovelhead` (stereo, 5 979) | 1.18 / 1.10 s | ~0.35 s | ~1.04 / 0.96 s (−12%) |
+| `main.mr` (mono, 5 636) | 0.93 s | ~0.30 s | ~0.78 s (−16%, at four samples a pass) |
+
+### 7.3 What this changes about the plan
+
+Two proposals, both in the shape of the ones already landed, both bit-exact for
+the same reason (nothing is reassociated; the work is only *reordered in time*):
+
+* **O5a — bucket the graph's nodes by `ir_structure`.** 3x on `build_graph`,
+  −37% on the front end, 23 scripts verified identical. Risk: the `ir_structure`
+  invariant, which a `debug_assert` covers; the `GRAPH` and `VALUES` gates cover
+  the rest.
+* **O2c — two samples per channel per pass.** 1.66x on the stereo convolution,
+  −12% to −16% of a stereo frame; and for mono, four samples a pass is worth
+  another 2x over `f_two` (measured as a loop *shape* only — a real four-sample
+  kernel has three tails to handle, which is the work O2c would do). Risk: the
+  same boundary algebra as O2, covered by the same kind of bit test, which now
+  exists as a template. `f_pair`'s mismatched-length fallback has to be kept for
+  stereo.
+
+Neither is taken yet: this section is the measurement, and both need the same
+treatment O1–O3 got (test, dumps, the 13 gates) before they land. O2c is the
+bigger win and the smaller change.
