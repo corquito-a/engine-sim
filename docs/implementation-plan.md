@@ -25,8 +25,8 @@ Everything else in `next-steps.md` stands.
 
 **Item 4 (performance) is investigated separately**:
 [`performance-investigation.md`](performance-investigation.md) (the profile) and
-[`performance-options.md`](performance-options.md) (the contested menu). Three of
-its findings have **landed** on this branch, before Phase 1, because every phase
+[`performance-options.md`](performance-options.md) (the contested menu). Five of
+its findings have **landed** before Phase 1, because every phase
 below runs the front end and the audio path many times:
 
 * `55b0983` — the expansion memo is bucketed by a context chain hash. `radial_9`'s
@@ -34,8 +34,12 @@ below runs the front end and the audio path many times:
 * `80e79e7` — one chamber volume per timestep instead of nine reads.
 * `0ea3870` — two samples per pass on the mono convolution path: **−14.3%** of a
   `main.mr` frame, **−28.9%** of a `trx520` frame.
+* `fa70a7a` — two samples of *each* channel per pass on the stereo path: −11% to
+  −15% of a stereo frame.
+* `34089c2` — the graph's nodes bucketed by structure: `build_graph` 3.3× faster,
+  −37% of the front end.
 
-All three are bit-identical on every check available (the 13 oracle gates included)
+All five are bit-identical on every check available (the 13 oracle gates included)
 and none touches a formula. **The cost table below was measured before them**, so
 Phase 0's estimates are pessimistic by ~20% on anything that starts the front end;
 re-measure rather than re-estimate when the phase is picked up. The rest of the

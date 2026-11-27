@@ -24,6 +24,8 @@ this turn change a conclusion from last turn (O2 / O4 — see §2.6).
 | **O1** expansion memo | `expand_all` 3.61 s → 0.23 s on `radial_9` (15×), whole front end 4 115 ms → 747 ms | **landed** (`55b0983`), option E, with the hash invariant asserted; **F** remains a sequel, not an alternative | dumps of 21 scripts identical; 184 tests; all 13 oracle gates |
 | **O2** mono convolution | 1.99× the convolution ⇒ **14.3%** off a `main.mr` frame | **landed** (`0ea3870`), option B only; C (four chains) rejected on measurement | bit-verified `n = 2..40` and the real 5 636-tap response; k=2 vs k=4 timed |
 | **O3** volume per sub-step | 3% of a `main.mr` frame, ~3% of `trx520`'s | **landed** (`80e79e7`), option D+A (one evaluation per timestep, threaded as a parameter) | 36 ns × 8 sub-steps × cylinders, counted |
+| **O5a** graph node bucket | `build_graph` 0.118 s → 0.034 s (3.3×), front end −37% | **landed** (`34089c2`) | graphs byte-identical for 23 scripts; `debug_assert` on the index; 13 gates |
+| **O2c** two samples per channel | stereo frames **−11% to −15%** | **landed** (`fa70a7a`) | bit test at every wrap phase + the 10 000-tap response; WAVs byte-identical for 5 assets |
 
 ---
 
@@ -461,23 +463,28 @@ measured `G mac/s` and the frame times on this machine — treat as an estimate)
 | `ferrari_412_t2` / `shovelhead` (stereo, 5 979) | 1.18 / 1.10 s | ~0.35 s | ~1.04 / 0.96 s (−12%) |
 | `main.mr` (mono, 5 636) | 0.93 s | ~0.30 s | ~0.78 s (−16%, at four samples a pass) |
 
-### 7.3 What this changes about the plan
+### 7.3 Both were taken
 
-Two proposals, both in the shape of the ones already landed, both bit-exact for
-the same reason (nothing is reassociated; the work is only *reordered in time*):
+They landed in the next PR (`fa70a7a`, `34089c2`) after the measurement, with the
+verification the measurement asked for:
 
-* **O5a — bucket the graph's nodes by `ir_structure`.** 3x on `build_graph`,
-  −37% on the front end, 23 scripts verified identical. Risk: the `ir_structure`
-  invariant, which a `debug_assert` covers; the `GRAPH` and `VALUES` gates cover
-  the rest.
-* **O2c — two samples per channel per pass.** 1.66x on the stereo convolution,
-  −12% to −16% of a stereo frame; and for mono, four samples a pass is worth
-  another 2x over `f_two` (measured as a loop *shape* only — a real four-sample
-  kernel has three tails to handle, which is the work O2c would do). Risk: the
-  same boundary algebra as O2, covered by the same kind of bit test, which now
-  exists as a template. `f_pair`'s mismatched-length fallback has to be kept for
-  stereo.
+| | | landed result |
+|---|---|---|
+| **O5a** | bucket the graph's nodes by `ir_structure` | `build_graph` 0.118 → 0.034-0.038 s (3.3×), front end 0.222 → 0.14 s; graphs byte-identical for 23 scripts; the `ir_structure` invariant is a `debug_assert` that runs over the whole script corpus in a debug test build |
+| **O2c** | two samples of each channel in one pass | radial_9 **2.74 → 2.33 s** (−15%), 412_t2 **1.15 → 1.02 s** (−11%), shovelhead **1.06 → 0.93 s** (−12%); mono unchanged. A new bit test compares `f_pair_two` against two `f_pair` calls at every wrap phase of `n = 2..40`, over two wrap periods of the 10 000-tap response, and through the unequal-length fallback |
 
-Neither is taken yet: this section is the measurement, and both need the same
-treatment O1–O3 got (test, dumps, the 13 gates) before they land. O2c is the
-bigger win and the smaller change.
+Two notes on the O2c measurement, because they are the difference between a
+number and a reassurance:
+
+* The A/B is interleaved (same binary configuration, alternating runs, best of
+  five). `measure_performance.sh`'s single run per asset is **not** precise
+  enough to see a 15% change on this box: it reported radial_9 at 2.32 s both
+  before and after while two interleaved runs of the two binaries separate
+  2.74 from 2.33 every time. Use the sweep for the floor it enforces, not for
+  deltas of this size.
+* The same sweep is a reminder that **this box is not the box §6 measured.**
+  Its 21 assets average 1.06× real time here, with the slowest at 0.86×
+  (`ferrari_f136_v8`); the 1.30×/1.02× in `next-steps.md` came from a machine
+  about 35% faster. The port is still ahead of the original on every asset
+  (0.75× average), but "every asset is above real time" is a claim about a
+  machine, not about the code.
