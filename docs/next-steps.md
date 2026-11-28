@@ -156,6 +156,38 @@ two jobs with two failure modes, and the cost belongs to the one that earns it.
    shared runner is noise — but it becomes a nightly job that *reports* (no
    failure threshold) so the real-time factor has a history.
 
+### 1.7 What the first CI run found
+
+Three failures, and not one of them was in the Rust tree:
+
+| job | failure | cause | status |
+|---|---|---|---|
+| `tests (windows-latest)` | `assets/main.mr: 1:23: unrecognized token` | the Windows checkout had CRLF line endings, and the scanner has no `\r` in its whitespace set — because the *reference's* flex rule is `[ \t\v\n\f]`, which has none either. The port was right and the checkout was wrong. | fixed: `.gitattributes` pins `eol=lf` |
+| `tests (ubuntu-latest)` | `butterworth_coefficients_match_the_reference`: `a[0] 1090564728 != 1090564727` | the expected bits hard-code one *glibc version's* `tanf`. Ubuntu 24.04 and Debian 12 round it differently — demonstrated locally: on this box `tanf(x)` equals `(float)tan((double)x)` exactly, so the two agree here and disagree there. | open |
+| `gates (ubuntu)` | `RUN`: "engine trace differs from the recorded fixture", `chamber_pressure 40f8bcdf3541db43` vs `…347175cc` | the same cause one level up: the recorded trace is a recording of one machine's libm, and the gas path calls `exp`/`ln`/`powf` 81 times | open |
+
+The open two are the same question, and it is the question §4 of
+[`toolchain-performance.md`](toolchain-performance.md) posed about Windows one
+level down: **what does "bit-exact" mean when the bits depend on the C library?**
+Three answers:
+
+- **Pin the runner** to an image whose glibc matches the recording. Cheap, brittle
+  (images retire), and it does nothing for Windows.
+- **Compare live, not against stored bits.** The gates already build the C++
+  reference on the runner; `RUN` should diff against that rather than against a
+  fixture recorded elsewhere. The claim becomes "identical to the original, here",
+  which is the same claim in a form that cannot pass by being stale — and the dsp
+  unit test's hard-coded coefficients should become an independent transcription
+  of the reference formula instead of a recording of one libm. **Recommended.**
+- **Deterministic maths**: own `tan`/`exp`/`pow`, which makes results portable in
+  every direction — and also makes the port differ from the (unmodified)
+  original everywhere, so the oracle comparison has to move with it.
+
+Until that is decided, the `gates` job cannot be required for merge on a runner
+other than the one that recorded the fixtures, which is precisely the situation
+the first run exposed.
+
+
 Cost: half a day, mostly YAML. Value: everything else in this document stops
 depending on a human.
 

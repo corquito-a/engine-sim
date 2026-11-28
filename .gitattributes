@@ -1,0 +1,15 @@
+# The scanner is faithful to the reference, and the reference's flex rule is
+# `[ \t\v\n\f]` — there is no carriage return in it. A CRLF checkout therefore
+# turns every script into "unrecognized token" on its first line, which is what
+# the first Windows CI run found in `crates/engine-sim-cli/tests/cli_tests.rs`.
+#
+# Whether the *product* should accept CRLF is a separate question (the original
+# refuses it, so accepting it is a deliberate divergence); this keeps the
+# repository's own assets identical on every platform.
+* text=auto eol=lf
+*.mr      text eol=lf
+*.trace   text eol=lf
+*.graph   text eol=lf
+*.values  text eol=lf
+*.execute text eol=lf
+*.errors  text eol=lf
