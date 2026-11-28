@@ -6,7 +6,7 @@ contested on its own terms, then a way forward proposed from what the contest
 shows. "Outcome" is what you would *get*, not what you would hope for: an option
 whose outcome is unverifiable is marked as such however attractive it looks.
 
-Everything below is measured on this sandbox (2 vCPU, `rustc` 1.88.0, `g++ -O2`),
+Everything below is measured on this sandbox (2 vCPU, `rustc` 1.100.0, `g++ -O2`),
 because the whole project's habit is to price things in gates and seconds rather
 than in adjectives.
 
@@ -21,7 +21,7 @@ than in adjectives.
 | engine wrappers | 20, all with a `vehicle(...)` and a `transmission(...)` of their own |
 | real time | 1.30 x average, slowest asset 1.02 x, setup 0.4–0.7 s (4.0 s for the nine-cylinder radial) — **on the machine that recorded it**. A 2.60 GHz Xeon, same code with the fat-LTO profile: **1.11 x average, slowest 0.88 x** (`radial_9`), setup 0.11–0.41 s after O1/O5a; without fat LTO the same box gives 1.06 x / 0.86 x. See [`toolchain-performance.md`](toolchain-performance.md). The original is 0.75 x average there, so the port still wins every asset, but the absolute figure is a property of the box |
 | shell upstream | `engine_sim_application.cpp` 1 136 lines + `ui_*` 842 + `application_settings.h`; assessment §9 prices the Windows/Direct3D glue at ~35 k LOC, not portable |
-| CI today | `.github/workflows/cmake.yml`: Windows, CMake, **C++ only**. Nothing builds `rust/`; no gate runs anywhere but a person's shell |
+| CI today | `.github/workflows/rust.yml`, two jobs split by question: `tests` (`cargo test --release --all-targets --locked`, ubuntu **and windows**, toolchain pinned by `rust/rust-toolchain.toml`) and `gates` (`run_script_parity.sh` plus the DSP and core traces, ubuntu). 186 tests pass on the pinned toolchain locally; the Windows job is the first proof that the port builds where the original lives. `.github/workflows/cmake.yml` still builds the C++ application on Windows. Open: the Windows *parity* gate, and `run_script_parity.sh --only` partitioning |
 
 ---
 
@@ -155,6 +155,38 @@ two jobs with two failure modes, and the cost belongs to the one that earns it.
 6. `measure_performance.sh` stays out of CI by design — a wall-clock number on a
    shared runner is noise — but it becomes a nightly job that *reports* (no
    failure threshold) so the real-time factor has a history.
+
+### 1.7 What the first CI run found
+
+Three failures, and not one of them was in the Rust tree:
+
+| job | failure | cause | status |
+|---|---|---|---|
+| `tests (windows-latest)` | `assets/main.mr: 1:23: unrecognized token` | the Windows checkout had CRLF line endings, and the scanner has no `\r` in its whitespace set — because the *reference's* flex rule is `[ \t\v\n\f]`, which has none either. The port was right and the checkout was wrong. | fixed: `.gitattributes` pins `eol=lf` |
+| `tests (ubuntu-latest)` | `butterworth_coefficients_match_the_reference`: `a[0] 1090564728 != 1090564727` | the expected bits hard-code one *glibc version's* `tanf`. Ubuntu 24.04 and Debian 12 round it differently — demonstrated locally: on this box `tanf(x)` equals `(float)tan((double)x)` exactly, so the two agree here and disagree there. | open |
+| `gates (ubuntu)` | `RUN`: "engine trace differs from the recorded fixture", `chamber_pressure 40f8bcdf3541db43` vs `…347175cc` | the same cause one level up: the recorded trace is a recording of one machine's libm, and the gas path calls `exp`/`ln`/`powf` 81 times | open |
+
+The open two are the same question, and it is the question §4 of
+[`toolchain-performance.md`](toolchain-performance.md) posed about Windows one
+level down: **what does "bit-exact" mean when the bits depend on the C library?**
+Three answers:
+
+- **Pin the runner** to an image whose glibc matches the recording. Cheap, brittle
+  (images retire), and it does nothing for Windows.
+- **Compare live, not against stored bits.** The gates already build the C++
+  reference on the runner; `RUN` should diff against that rather than against a
+  fixture recorded elsewhere. The claim becomes "identical to the original, here",
+  which is the same claim in a form that cannot pass by being stale — and the dsp
+  unit test's hard-coded coefficients should become an independent transcription
+  of the reference formula instead of a recording of one libm. **Recommended.**
+- **Deterministic maths**: own `tan`/`exp`/`pow`, which makes results portable in
+  every direction — and also makes the port differ from the (unmodified)
+  original everywhere, so the oracle comparison has to move with it.
+
+Until that is decided, the `gates` job cannot be required for merge on a runner
+other than the one that recorded the fixtures, which is precisely the situation
+the first run exposed.
+
 
 Cost: half a day, mostly YAML. Value: everything else in this document stops
 depending on a human.

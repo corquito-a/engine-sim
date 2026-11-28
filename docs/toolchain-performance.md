@@ -107,7 +107,14 @@ last percent on Linux.
      That changes every output bit on Linux too, so the oracle comparison has to
      move with it. Only worth it if a replay or an audio file has to be
      bit-identical across operating systems.
-  Decide which one is required before writing either CI job.
+  **Decided: per-platform parity.** Each platform is verified against the original
+  built for that platform; the Linux and Windows artifacts may differ from each
+  other by the last few bits, and that is documented rather than fought. The
+  consequence for CI, which is deliberately not hidden: the Windows job proves
+  the port *builds* and passes its own tests where the original lives, while the
+  bit-exact oracle comparison runs only on Linux. A Windows *parity* gate (Rust on
+  Windows against the oracle on Windows, with the same CRT) is the next step if
+  Windows releases ever need the word "exact" attached to them.
 
 ## 5. Exactness: what each of these does to the output
 
@@ -171,9 +178,9 @@ Still missing, and what each unblocks:
 
 This feeds Phase 1 (`docs/next-steps.md` §1) and adds five requirements:
 
-1. **Pin the toolchain in the repository.** There is no `rust-toolchain.toml`
-   today, so a developer and CI can silently disagree about the compiler — and
-   §2 shows the compiler changes which LTO mode is better.
+1. **Pin the toolchain in the repository.** Done: `rust/rust-toolchain.toml`
+   pins 1.100.0. Without it a developer and CI can silently disagree about the
+   compiler — and §2 shows the compiler changes which LTO mode is better.
 2. **Build the same way everywhere.** The release profile is the thing being
    benchmarked; no job should override it with extra `RUSTFLAGS` beyond a target.
 3. **Never ship `target-cpu=native`.** Artifacts must run where they are sent.
