@@ -1,0 +1,14 @@
+# Pinned, because both the profile and the gates depend on it.
+#
+# `Cargo.toml` records which LTO mode was fastest *on this compiler* — the
+# ordering reverses between 1.88 and 1.100 (docs/toolchain-performance.md §2) —
+# and the bit-exact traces are only meaningful for the compiler the numbers were
+# recorded on. A developer on a different toolchain is running a different
+# program; this makes that impossible to do by accident.
+#
+# Upgrading it is a change like any other: re-measure the profile, re-run the
+# traces and the gates, and update the numbers in the same commit.
+[toolchain]
+channel = "1.100.0"
+profile = "minimal"
+components = ["rustfmt", "clippy"]

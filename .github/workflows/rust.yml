@@ -1,0 +1,101 @@
+# Two jobs, split by the question they answer (docs/next-steps.md §1):
+#
+#   tests  -- "does the Rust tree still satisfy its own tests?"  No oracle, no
+#             g++, runs on Linux *and* Windows, which is the first time the port
+#             is proven to build where the original lives.
+#   gates  -- "does it still agree with the original, bit for bit?"  Needs the
+#             C++ oracle, one OS, ~6 min, and it is the only thing that makes the
+#             word *exact* mean anything. Required for merge.
+#
+# The toolchain is pinned by rust/rust-toolchain.toml, so CI and a developer run
+# the same compiler; see docs/toolchain-performance.md for why that matters.
+name: Rust
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "rust/**"
+      - "dependencies/submodules/piranha/**"
+      - ".github/workflows/rust.yml"
+  pull_request:
+    branches: [master]
+    paths:
+      - "rust/**"
+      - "dependencies/submodules/piranha/**"
+      - ".github/workflows/rust.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: rust-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  tests:
+    name: tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # `builtin_types::tests::the_piranha_table_matches_test_rules_cpp` reads
+          # `dependencies/submodules/piranha/test/test_rules.cpp` and panics if it
+          # is missing, so the submodules are not optional here.
+          submodules: recursive
+
+      - name: Install the pinned toolchain
+        run: rustup show
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust -> target
+
+      - name: Build and test
+        run: cargo test --release --all-targets --locked
+
+  gates:
+    name: parity gates (ubuntu)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install the pinned toolchain
+        run: rustup show
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust -> target
+
+      # The oracle is C++ built at -O2. It is deliberately *not* built with
+      # -march=native: GCC contracts a*b+c into FMA by default for C++, and a
+      # wider target could move the reference's own bits.
+      - name: Check the C++ toolchain
+        run: g++ --version
+
+      - name: Parity gates
+        run: bash tools/parity/run_script_parity.sh
+        env:
+          WORK: ${{ runner.temp }}/parity
+
+      - name: DSP and core traces
+        run: |
+          bash tools/parity/run_dsp_parity.sh
+          bash tools/parity/run_core_parity.sh
+        env:
+          WORK: ${{ runner.temp }}/parity
