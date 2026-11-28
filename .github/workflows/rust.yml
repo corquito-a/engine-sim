@@ -9,6 +9,10 @@
 #
 # The toolchain is pinned by rust/rust-toolchain.toml, so CI and a developer run
 # the same compiler; see docs/toolchain-performance.md for why that matters.
+#
+# Every failing step also posts its own output into the pull request. Hosted
+# runner logs sit behind an endpoint that a sandboxed client cannot read, and a
+# red check with no text is nearly useless; the tail is short on purpose.
 name: Rust
 
 on:
@@ -30,8 +34,13 @@ concurrency:
   group: rust-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  pull-requests: write
+
 env:
   CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
 
 jobs:
   tests:
@@ -44,6 +53,7 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     defaults:
       run:
+        shell: bash
         working-directory: rust
     steps:
       - uses: actions/checkout@v4
@@ -61,7 +71,25 @@ jobs:
           workspaces: rust -> target
 
       - name: Build and test
-        run: cargo test --release --all-targets --locked
+        run: |
+          set -o pipefail
+          cargo test --release --all-targets --locked 2>&1 | tee tests.log
+
+      - name: Report failure in the pull request
+        if: failure() && github.event_name == 'pull_request'
+        continue-on-error: true
+        working-directory: ${{ github.workspace }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "### \`tests (${{ matrix.os }})\` failed"
+            echo ""
+            echo '```'
+            tail -n 120 rust/tests.log 2>/dev/null || echo "(no log captured)"
+            echo '```'
+          } > "$RUNNER_TEMP/comment.md"
+          gh pr comment "${{ github.event.pull_request.number }}" --body-file "$RUNNER_TEMP/comment.md"
 
   gates:
     name: parity gates (ubuntu)
@@ -69,6 +97,7 @@ jobs:
     timeout-minutes: 60
     defaults:
       run:
+        shell: bash
         working-directory: rust
     steps:
       - uses: actions/checkout@v4
@@ -89,13 +118,40 @@ jobs:
         run: g++ --version
 
       - name: Parity gates
-        run: bash tools/parity/run_script_parity.sh
         env:
           WORK: ${{ runner.temp }}/parity
+        run: |
+          set -o pipefail
+          bash tools/parity/run_script_parity.sh 2>&1 | tee script-parity.log
 
       - name: DSP and core traces
-        run: |
-          bash tools/parity/run_dsp_parity.sh
-          bash tools/parity/run_core_parity.sh
         env:
           WORK: ${{ runner.temp }}/parity
+        run: |
+          set -o pipefail
+          bash tools/parity/run_dsp_parity.sh 2>&1 | tee dsp-parity.log
+          bash tools/parity/run_core_parity.sh 2>&1 | tee core-parity.log
+
+      - name: Report failure in the pull request
+        if: failure() && github.event_name == 'pull_request'
+        continue-on-error: true
+        working-directory: ${{ github.workspace }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "### \`parity gates (ubuntu)\` failed"
+            echo ""
+            for log in script-parity dsp-parity core-parity; do
+              if [ -f "rust/$log.log" ]; then
+                echo "<details><summary>$log.log</summary>"
+                echo ""
+                echo '```'
+                tail -n 80 "rust/$log.log"
+                echo '```'
+                echo "</details>"
+                echo ""
+              fi
+            done
+          } > "$RUNNER_TEMP/comment.md"
+          gh pr comment "${{ github.event.pull_request.number }}" --body-file "$RUNNER_TEMP/comment.md"
